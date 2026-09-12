@@ -1,0 +1,228 @@
+name: CI and Release
+
+# Tests run on every pull request update.
+# On merge, tests must pass, then we bump MAJOR/MINOR from the PR title,
+# create a tag + GitHub release (notes from commits), and attach production builds.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  CI: true
+
+jobs:
+  test:
+    name: Test
+    if: github.event.action != 'closed' || github.event.pull_request.merged == true
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            xdg-utils
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Frontend tests
+        run: pnpm test
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  version-and-release:
+    name: Tag and release
+    needs: test
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      tag: ${{ steps.bump.outputs.tag }}
+      release_id: ${{ steps.create_release.outputs.id }}
+    steps:
+      - name: Checkout base branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump version from PR title
+        id: bump
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          chmod +x .github/scripts/bump-version.sh .github/scripts/release-notes.sh
+          PREV_TAG="$(git describe --tags --match 'v*' --abbrev=0 2>/dev/null || true)"
+          echo "prev_tag=${PREV_TAG}" >> "$GITHUB_OUTPUT"
+
+          # Capture previous tag before creating the new one for release notes.
+          eval "$(.github/scripts/bump-version.sh "$PR_TITLE")"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "bump=${BUMP}" >> "$GITHUB_OUTPUT"
+          echo "previous=${PREVIOUS}" >> "$GITHUB_OUTPUT"
+          echo "Bumped ${PREVIOUS} -> ${VERSION} (${BUMP}) from title: ${PR_TITLE}"
+
+      - name: Commit version bump
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+          TAG: ${{ steps.bump.outputs.tag }}
+        run: |
+          git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
+          git commit -m "chore: release ${TAG}"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "HEAD:${{ github.event.pull_request.base.ref }}"
+          git push origin "${TAG}"
+
+      - name: Generate release notes from commits
+        id: notes
+        env:
+          PREV_TAG: ${{ steps.bump.outputs.prev_tag }}
+          TAG: ${{ steps.bump.outputs.tag }}
+          BUMP: ${{ steps.bump.outputs.bump }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          NOTES_FILE="$(mktemp)"
+          {
+            echo "Merged PR: [${PR_TITLE}](${PR_URL})"
+            echo
+            echo "Version bump: **${BUMP}**"
+            echo
+            # Always pass PREV_TAG (may be empty on the first release).
+            .github/scripts/release-notes.sh "${PREV_TAG}"
+          } > "${NOTES_FILE}"
+          echo "path=${NOTES_FILE}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        id: create_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.bump.outputs.tag }}
+          NOTES_FILE: ${{ steps.notes.outputs.path }}
+        run: |
+          URL="$(gh release create "${TAG}" \
+            --title "${TAG}" \
+            --notes-file "${NOTES_FILE}" \
+            --verify-tag)"
+          echo "url=${URL}" >> "$GITHUB_OUTPUT"
+          ID="$(gh release view "${TAG}" --json databaseId --jq .databaseId)"
+          echo "id=${ID}" >> "$GITHUB_OUTPUT"
+          echo "Created release ${TAG} (${URL})"
+
+  build:
+    name: Production build (${{ matrix.label }})
+    needs: version-and-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            label: macOS arm64
+            args: --target aarch64-apple-darwin
+            rust_targets: aarch64-apple-darwin
+          - platform: macos-latest
+            label: macOS x64
+            args: --target x86_64-apple-darwin
+            rust_targets: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            label: Linux x64
+            args: ''
+            rust_targets: ''
+          - platform: windows-latest
+            label: Windows x64
+            args: --bundles nsis,msi
+            rust_targets: ''
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version-and-release.outputs.tag }}
+
+      - name: Install Linux build deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            xdg-utils
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and upload to release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ needs.version-and-release.outputs.tag }}
+          releaseId: ${{ needs.version-and-release.outputs.release_id }}
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

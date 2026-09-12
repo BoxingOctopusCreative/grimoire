@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <!--
+    Sets Grimoire's initial ebook library folder on first install.
+    Override with: msiexec /i Grimoire_x64_en-US.msi LIBRARYPATH="D:\Books"
+    Default: %USERPROFILE%\Documents\Grimoire
+  -->
+  <Fragment>
+    <Property Id="LIBRARYPATH" Secure="yes" />
+
+    <!--
+      Immediate + Impersonate so AppData writes happen as the installing user.
+      Skip on uninstall / upgrade remove; only seed config when missing (script handles that).
+    -->
+    <CustomAction
+      Id="SetGrimoireLibraryPath"
+      Directory="TARGETDIR"
+      ExeCommand="powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;$ErrorActionPreference='Stop'; $p='[LIBRARYPATH]'; if ([string]::IsNullOrWhiteSpace($p)) { $p = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Grimoire' }; New-Item -ItemType Directory -Force -Path $p | Out-Null; $d = Join-Path $env:APPDATA 'grimoire'; New-Item -ItemType Directory -Force -Path $d | Out-Null; $c = Join-Path $d 'config.json'; if (-not (Test-Path -LiteralPath $c)) { (@{ library_path = $p } | ConvertTo-Json) | Set-Content -LiteralPath $c -Encoding utf8 }&quot;"
+      Execute="immediate"
+      Impersonate="yes"
+      Return="ignore"
+    />
+
+    <InstallExecuteSequence>
+      <Custom Action="SetGrimoireLibraryPath" After="InstallFinalize">NOT Installed</Custom>
+    </InstallExecuteSequence>
+  </Fragment>
+</Wix>

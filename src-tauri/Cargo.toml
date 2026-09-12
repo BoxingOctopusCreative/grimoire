@@ -1,0 +1,47 @@
+[package]
+name = "grimoire"
+version = "0.1.0"
+description = "Grimoire - eBook collection manager"
+authors = ["you"]
+edition = "2021"
+license = "MPL-2.0"
+
+[lib]
+name = "grimoire_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled", "functions"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+anyhow = "1"
+dirs = "6"
+base64 = "0.22"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+sanitize-filename = "0.6"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "time"] }
+mtp-rs = "0.32"
+bytes = "1"
+futures = "0.3"
+parking_lot = "0.12"
+libc = "0.2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+kindling-mobi = "0.42"
+mobi = "0.8"
+rars = "0.9.4"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

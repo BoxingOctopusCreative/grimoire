@@ -1,0 +1,9 @@
+packages:
+  - .
+
+# pnpm 12+: approve packages that need install-time build scripts.
+# See https://pnpm.io/settings/build#allowbuilds
+allowBuilds:
+  core-js: true
+  es5-ext: true
+  esbuild: true
