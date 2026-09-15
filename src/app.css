@@ -145,6 +145,8 @@ html.window-maximized .app-shell {
 	min-height: 0;
 	overflow: auto;
 	overflow-x: hidden;
+	display: flex;
+	flex-direction: column;
 }
 
 .topbar {
@@ -210,6 +212,7 @@ html.window-maximized .app-shell {
 	font-size: 1.55rem;
 	font-weight: 600;
 	letter-spacing: -0.02em;
+	filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.28)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.22));
 }
 
 .brand-logo {

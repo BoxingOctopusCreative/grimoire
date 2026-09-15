@@ -36,7 +36,7 @@ LINUX_ARM_TARGET ?= aarch64-unknown-linux-gnu
 	build-mac build-mac-arm build-mac-intel \
 	build-windows build-linux build-linux-arm \
 	ensure-frontend ensure-mac-targets ensure-windows-target ensure-linux-target \
-	ensure-cargo-xwin clean
+	ensure-cargo-xwin clean-dmg-mounts clean
 
 .DEFAULT_GOAL := help
 
@@ -55,6 +55,7 @@ help:
 	@echo "  make test-frontend      Run Vitest suite"
 	@echo "  make test-rust          Run cargo test in src-tauri"
 	@echo "  make clean              Remove frontend and Rust build outputs"
+	@echo "  make clean-dmg-mounts   Unmount leftover Tauri DMG staging volumes (macOS)"
 	@echo ""
 	@echo "Run each platform target on that OS when possible. Windows can be"
 	@echo "cross-built from macOS/Linux with cargo-xwin + NSIS + LLVM."
@@ -93,20 +94,34 @@ ensure-linux-target:
 ensure-cargo-xwin:
 	@command -v $(CARGO_XWIN) >/dev/null 2>&1 || cargo install cargo-xwin --locked
 
+# Stale create-dmg mounts (/Volumes/dmg.*) break subsequent `tauri build` DMG steps.
+clean-dmg-mounts:
+ifeq ($(HOST_OS),Darwin)
+	@for vol in /Volumes/dmg.* /Volumes/Grimoire*; do \
+		if [ -e "$$vol" ]; then \
+			echo "Detaching $$vol"; \
+			hdiutil detach "$$vol" -force >/dev/null 2>&1 || true; \
+		fi; \
+	done
+	@find src-tauri/target -maxdepth 5 -name 'rw.*.dmg' -delete 2>/dev/null || true
+else
+	@echo "clean-dmg-mounts is only needed on macOS"
+endif
+
 # Native production build for the machine you are on.
-build: ensure-frontend
+build: ensure-frontend clean-dmg-mounts
 	$(TAURI) build $(TAURI_BUILD_FLAGS)
 
 # --- macOS -------------------------------------------------------------------
 
-build-mac: ensure-frontend ensure-mac-targets
+build-mac: ensure-frontend ensure-mac-targets clean-dmg-mounts
 ifeq ($(HOST_OS),Darwin)
 	$(TAURI) build $(TAURI_BUILD_FLAGS) --target $(MAC_TARGET)
 else
 	$(error macOS builds require a Darwin host (got $(HOST_OS)))
 endif
 
-build-mac-arm: ensure-frontend
+build-mac-arm: ensure-frontend clean-dmg-mounts
 ifeq ($(HOST_OS),Darwin)
 	@$(RUSTUP) target add $(MAC_ARM_TARGET)
 	$(TAURI) build $(TAURI_BUILD_FLAGS) --target $(MAC_ARM_TARGET)
@@ -114,7 +129,7 @@ else
 	$(error macOS builds require a Darwin host (got $(HOST_OS)))
 endif
 
-build-mac-intel: ensure-frontend
+build-mac-intel: ensure-frontend clean-dmg-mounts
 ifeq ($(HOST_OS),Darwin)
 	@$(RUSTUP) target add $(MAC_INTEL_TARGET)
 	$(TAURI) build $(TAURI_BUILD_FLAGS) --target $(MAC_INTEL_TARGET)

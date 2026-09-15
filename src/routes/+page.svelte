@@ -30,6 +30,13 @@
 	import Check from '@lucide/svelte/icons/check';
 	import Import from '@lucide/svelte/icons/import';
 	import FolderSync from '@lucide/svelte/icons/folder-sync';
+	import PanelLeft from '@lucide/svelte/icons/panel-left';
+	import LibraryFilters from '$lib/LibraryFilters.svelte';
+	import {
+		bookMatchesFilters,
+		type FormatKind,
+		type ReadingStatus
+	} from '$lib/library-filters';
 	import ActionButton from '$lib/ui/ActionButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Checkbox from '$lib/ui/Checkbox.svelte';
@@ -66,6 +73,11 @@
 
 	let selectMode = $state(false);
 	let selectedIds = $state<Set<number>>(new Set());
+	let filtersOpen = $state(true);
+	let filterStatuses = $state<Set<ReadingStatus>>(new Set());
+	let filterGenres = $state<Set<string>>(new Set());
+	let filterFormats = $state<Set<FormatKind>>(new Set());
+	let filterAuthors = $state<Set<string>>(new Set());
 	let bulkEditOpen = $state(false);
 	let bulkAddTags = $state('');
 	let bulkApplySeries = $state(false);
@@ -77,14 +89,27 @@
 
 	const selectedCount = $derived(selectedIds.size);
 
+	const filtersActive = $derived(
+		filterStatuses.size > 0 ||
+			filterGenres.size > 0 ||
+			filterFormats.size > 0 ||
+			filterAuthors.size > 0
+	);
+
+	const filteredBooks = $derived(
+		books.filter((b) =>
+			bookMatchesFilters(b, filterStatuses, filterGenres, filterFormats, filterAuthors)
+		)
+	);
+
 	const readingBooks = $derived(
-		books.filter(
+		filteredBooks.filter(
 			(b) => b.progress_percent != null && b.progress_percent < 100
 		)
 	);
-	const toReadBooks = $derived(books.filter((b) => b.progress_percent == null));
+	const toReadBooks = $derived(filteredBooks.filter((b) => b.progress_percent == null));
 	const readBooks = $derived(
-		books.filter((b) => b.progress_percent != null && b.progress_percent >= 100)
+		filteredBooks.filter((b) => b.progress_percent != null && b.progress_percent >= 100)
 	);
 
 	const librarySections = $derived(
@@ -165,7 +190,7 @@
 	}
 
 	function selectAllVisible() {
-		selectedIds = new Set(books.map((b) => b.id));
+		selectedIds = new Set(filteredBooks.map((b) => b.id));
 	}
 
 	function onWindowKeydown(event: KeyboardEvent) {
@@ -775,9 +800,17 @@
 				/>
 				<div class="menubar-actions">
 					<ActionButton
+						label={filtersOpen ? 'Hide filters' : 'Show filters'}
+						selected={filtersOpen}
+						tooltip={filtersOpen ? 'Hide filters' : 'Show filters'}
+						onclick={() => (filtersOpen = !filtersOpen)}
+					>
+						<PanelLeft size={18} strokeWidth={1.75} aria-hidden="true" />
+					</ActionButton>
+					<ActionButton
 						label={selectMode ? 'Done selecting' : 'Select books'}
 						selected={selectMode}
-						disabled={busy || books.length === 0}
+						disabled={busy || filteredBooks.length === 0}
 						tooltip={selectMode ? 'Done selecting' : 'Select books'}
 						onclick={toggleSelectMode}
 					>
@@ -808,7 +841,17 @@
 			</div>
 		</header>
 
-		<div class="library-content">
+		<div class="library-body" class:with-filters={filtersOpen}>
+			{#if filtersOpen}
+				<LibraryFilters
+					{books}
+					bind:statuses={filterStatuses}
+					bind:genres={filterGenres}
+					bind:formats={filterFormats}
+					bind:authors={filterAuthors}
+				/>
+			{/if}
+			<div class="library-content">
 			{#if importMessage}
 				<p class="ok">{importMessage}</p>
 			{/if}
@@ -844,6 +887,17 @@
 						in the reader.
 					</p>
 				</section>
+			{:else if filteredBooks.length === 0}
+				<section class="panel empty">
+					<h2>No books match these filters</h2>
+					<p class="muted">
+						{#if filtersActive}
+							Try clearing some filters, or adjust your search.
+						{:else}
+							Nothing to show.
+						{/if}
+					</p>
+				</section>
 			{:else}
 				<div class="library-sections">
 					{#each librarySections as section (section.id)}
@@ -863,6 +917,7 @@
 					{/each}
 				</div>
 			{/if}
+			</div>
 		</div>
 	{/if}
 
@@ -1060,11 +1115,15 @@
 		width: 100%;
 		max-width: none;
 		margin: 0;
+		flex: 1 1 auto;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
 	}
 
 	.library-menubar {
-		position: sticky;
-		top: 0;
+		flex: 0 0 auto;
 		z-index: 12;
 		border-bottom: 1px solid var(--line);
 		background: color-mix(in srgb, var(--accent) 9%, var(--paper-deep));
@@ -1094,10 +1153,38 @@
 		flex: 0 0 auto;
 	}
 
+	.library-body {
+		display: flex;
+		align-items: stretch;
+		flex: 1 1 auto;
+		min-height: 0;
+		width: 100%;
+	}
+
+	.library-body.with-filters {
+		flex-wrap: nowrap;
+	}
+
 	.library-content {
+		flex: 1 1 auto;
+		min-width: 0;
+		min-height: 0;
+		overflow-y: auto;
 		padding: 1.25rem clamp(1rem, 3vw, 2rem) 2.5rem;
 		width: min(1200px, 100%);
 		margin: 0 auto;
+	}
+
+	.library-body.with-filters .library-content {
+		width: auto;
+		max-width: none;
+		margin: 0;
+	}
+
+	@media (max-width: 720px) {
+		.library-body.with-filters {
+			flex-direction: column;
+		}
 	}
 
 	.page.dragging {
@@ -1254,7 +1341,7 @@
 		padding: 0.65rem 0.85rem;
 		margin: 0 0 0.9rem;
 		position: sticky;
-		top: 3.75rem;
+		top: 0;
 		z-index: 8;
 	}
 
