@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
-# Bump Grimoire version files from a PR title.
-# Usage: bump-version.sh "<pr title>"
-# Prints: VERSION=<semver> TAG=v<semver> BUMP=<major|minor>
+# Bump Grimoire version files from a PR title or explicit bump kind.
+# Usage: bump-version.sh "<pr title|major|minor|patch>"
+# Prints: VERSION=<semver> TAG=v<semver> BUMP=<major|minor|patch>
+#
+# Title rules (case-insensitive prefix):
+#   MAJOR ...  → major bump
+#   MINOR ...  → minor bump
+#   PATCH ...  → patch bump
+#   otherwise  → patch bump (default)
 set -euo pipefail
 
 TITLE="${1:-}"
 if [[ -z "${TITLE}" ]]; then
-  echo "usage: bump-version.sh \"<pr title>\"" >&2
+  echo "usage: bump-version.sh \"<pr title|major|minor|patch>\"" >&2
   exit 2
 fi
 
@@ -17,9 +23,10 @@ if [[ "${TITLE}" =~ ^[[:space:]]*[Mm][Aa][Jj][Oo][Rr]([[:space:]]|$) ]]; then
   BUMP="major"
 elif [[ "${TITLE}" =~ ^[[:space:]]*[Mm][Ii][Nn][Oo][Rr]([[:space:]]|$) ]]; then
   BUMP="minor"
+elif [[ "${TITLE}" =~ ^[[:space:]]*[Pp][Aa][Tt][Cc][Hh]([[:space:]]|$) ]]; then
+  BUMP="patch"
 else
-  echo "PR title must begin with MAJOR or MINOR (got: ${TITLE})" >&2
-  exit 1
+  BUMP="patch"
 fi
 
 CURRENT=""
@@ -46,6 +53,13 @@ case "${BUMP}" in
   minor)
     MINOR=$((MINOR + 1))
     PATCH=0
+    ;;
+  patch)
+    PATCH=$((PATCH + 1))
+    ;;
+  *)
+    echo "unknown bump kind: ${BUMP}" >&2
+    exit 1
     ;;
 esac
 

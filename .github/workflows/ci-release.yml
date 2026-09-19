@@ -1,19 +1,30 @@
 name: CI and Release
 
 # Tests run on every pull request update.
-# On merge, tests must pass, then we bump MAJOR/MINOR from the PR title,
+# On merge (or manual dispatch), tests must pass, then we bump the version,
 # create a tag + GitHub release (notes from commits), and attach production builds.
 on:
   pull_request:
     types: [opened, synchronize, reopened, closed]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump type
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
 
 permissions:
   contents: write
   pull-requests: read
 
 concurrency:
-  group: pr-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
 
 env:
   CI: true
@@ -21,7 +32,10 @@ env:
 jobs:
   test:
     name: Test
-    if: github.event.action != 'closed' || github.event.pull_request.merged == true
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.action != 'closed' ||
+      github.event.pull_request.merged == true
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
@@ -68,7 +82,9 @@ jobs:
   version-and-release:
     name: Tag and release
     needs: test
-    if: github.event.pull_request.merged == true
+    if: >
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true) ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-22.04
     outputs:
       version: ${{ steps.bump.outputs.version }}
@@ -78,8 +94,9 @@ jobs:
       - name: Checkout base branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.ref }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || github.ref_name }}
           fetch-depth: 0
+          fetch-tags: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure git
@@ -87,32 +104,48 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Bump version from PR title
+      - name: Bump version
         id: bump
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
+          BUMP_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.bump || github.event.pull_request.title }}
         run: |
+          set -euo pipefail
           chmod +x .github/scripts/bump-version.sh .github/scripts/release-notes.sh
+
           PREV_TAG="$(git describe --tags --match 'v*' --abbrev=0 2>/dev/null || true)"
           echo "prev_tag=${PREV_TAG}" >> "$GITHUB_OUTPUT"
 
           # Capture previous tag before creating the new one for release notes.
-          eval "$(.github/scripts/bump-version.sh "$PR_TITLE")"
+          # Assign first so a non-zero exit from bump-version.sh fails this step.
+          BUMP_OUT="$(.github/scripts/bump-version.sh "$BUMP_SOURCE")"
+          eval "${BUMP_OUT}"
+
+          if [[ -z "${VERSION:-}" || -z "${TAG:-}" ]]; then
+            echo "bump-version.sh did not produce VERSION/TAG" >&2
+            exit 1
+          fi
+
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "bump=${BUMP}" >> "$GITHUB_OUTPUT"
           echo "previous=${PREVIOUS}" >> "$GITHUB_OUTPUT"
-          echo "Bumped ${PREVIOUS} -> ${VERSION} (${BUMP}) from title: ${PR_TITLE}"
+          echo "Bumped ${PREVIOUS} -> ${VERSION} (${BUMP}) from: ${BUMP_SOURCE}"
 
       - name: Commit version bump
         env:
           VERSION: ${{ steps.bump.outputs.version }}
           TAG: ${{ steps.bump.outputs.tag }}
+          BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || github.ref_name }}
         run: |
+          set -euo pipefail
+          if [[ -z "${VERSION}" || -z "${TAG}" ]]; then
+            echo "Missing VERSION or TAG from bump step" >&2
+            exit 1
+          fi
           git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
           git commit -m "chore: release ${TAG}"
           git tag -a "${TAG}" -m "Release ${TAG}"
-          git push origin "HEAD:${{ github.event.pull_request.base.ref }}"
+          git push origin "HEAD:${BASE_REF}"
           git push origin "${TAG}"
 
       - name: Generate release notes from commits
@@ -121,12 +154,18 @@ jobs:
           PREV_TAG: ${{ steps.bump.outputs.prev_tag }}
           TAG: ${{ steps.bump.outputs.tag }}
           BUMP: ${{ steps.bump.outputs.bump }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
+          EVENT_NAME: ${{ github.event_name }}
+          SOURCE_LABEL: ${{ github.event_name == 'workflow_dispatch' && format('Manual dispatch ({0})', inputs.bump) || github.event.pull_request.title }}
+          SOURCE_URL: ${{ github.event_name == 'pull_request' && github.event.pull_request.html_url || format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}
         run: |
+          set -euo pipefail
           NOTES_FILE="$(mktemp)"
           {
-            echo "Merged PR: [${PR_TITLE}](${PR_URL})"
+            if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+              echo "Merged PR: [${SOURCE_LABEL}](${SOURCE_URL})"
+            else
+              echo "Manual release: [${SOURCE_LABEL}](${SOURCE_URL})"
+            fi
             echo
             echo "Version bump: **${BUMP}**"
             echo
@@ -142,6 +181,7 @@ jobs:
           TAG: ${{ steps.bump.outputs.tag }}
           NOTES_FILE: ${{ steps.notes.outputs.path }}
         run: |
+          set -euo pipefail
           URL="$(gh release create "${TAG}" \
             --title "${TAG}" \
             --notes-file "${NOTES_FILE}" \
