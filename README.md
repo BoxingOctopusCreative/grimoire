@@ -59,16 +59,19 @@ Or: `pnpm test`, `pnpm test:rust`, `pnpm test:all`.
 
 ## Release pipeline (GitHub Actions)
 
-Every pull request runs the test suite. When a PR is **merged**, Actions also:
+Every pull request runs the test suite. When a PR is **merged**, or when you run the workflow manually (**Actions → CI and Release → Run workflow**), Actions also:
 
-1. Runs tests again on the merge result
-2. Bumps the version from the PR title:
+1. Runs tests again
+2. Bumps the version from the PR title (or the manual bump choice):
    - Title starts with `MAJOR` → major bump (`1.2.3` → `2.0.0`)
    - Title starts with `MINOR` → minor bump (`1.2.3` → `1.3.0`)
+   - Title starts with `PATCH`, or anything else → patch bump (`1.2.3` → `1.2.4`)
 3. Creates a `vX.Y.Z` tag and a GitHub Release (notes from commit subjects since the previous tag)
 4. Builds production bundles for macOS (arm64 + x64), Linux x64, and Windows x64 (NSIS setup.exe **and** MSI), then attaches them to that release
 
-Example titles: `MINOR add dark mode default`, `MAJOR redesign library schema`.
+Example titles: `MINOR add dark mode default`, `MAJOR redesign library schema`, `add filter sidebar` (patch).
+
+Manual runs: pick `patch`, `minor`, or `major` in the workflow form.
 
 Repo Settings → Actions → General → Workflow permissions must allow **Read and write** so the workflow can push the version commit, tag, and release assets.
 
