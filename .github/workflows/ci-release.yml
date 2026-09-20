@@ -2,7 +2,8 @@ name: CI and Release
 
 # Tests run on every pull request update.
 # On merge (or manual dispatch), tests must pass, then we bump the version,
-# create a tag + GitHub release (notes from commits), and attach production builds.
+# create a tag + draft GitHub release, attach production builds, then publish
+# (draft-first so immutable releases can still receive assets).
 on:
   pull_request:
     types: [opened, synchronize, reopened, closed]
@@ -187,7 +188,7 @@ jobs:
           } > "${NOTES_FILE}"
           echo "path=${NOTES_FILE}" >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub release
+      - name: Create draft GitHub release
         id: create_release
         env:
           GH_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN }}
@@ -195,14 +196,16 @@ jobs:
           NOTES_FILE: ${{ steps.notes.outputs.path }}
         run: |
           set -euo pipefail
+          # Draft first so assets can upload before immutable publish locks the release.
           URL="$(gh release create "${TAG}" \
             --title "${TAG}" \
             --notes-file "${NOTES_FILE}" \
+            --draft \
             --verify-tag)"
           echo "url=${URL}" >> "$GITHUB_OUTPUT"
           ID="$(gh release view "${TAG}" --json databaseId --jq .databaseId)"
           echo "id=${ID}" >> "$GITHUB_OUTPUT"
-          echo "Created release ${TAG} (${URL})"
+          echo "Created draft release ${TAG} (${URL})"
 
   build:
     name: Production build (${{ matrix.label }})
@@ -269,13 +272,28 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build and upload to release
+      - name: Build and upload to draft release
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN }}
         with:
           tagName: ${{ needs.version-and-release.outputs.tag }}
           releaseId: ${{ needs.version-and-release.outputs.release_id }}
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+  publish-release:
+    name: Publish release
+    needs: [version-and-release, build]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN }}
+          TAG: ${{ needs.version-and-release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release edit "${TAG}" --draft=false
+          echo "Published immutable release ${TAG}"
+          gh release view "${TAG}" --json url,isDraft,isImmutable,assets --jq '{url,isDraft,isImmutable,asset_count:(.assets|length),assets:[.assets[].name]}'
