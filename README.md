@@ -66,8 +66,9 @@ Every pull request runs the test suite. When a PR is **merged**, or when you run
    - Title starts with `MAJOR` → major bump (`1.2.3` → `2.0.0`)
    - Title starts with `MINOR` → minor bump (`1.2.3` → `1.3.0`)
    - Title starts with `PATCH`, or anything else → patch bump (`1.2.3` → `1.2.4`)
-3. Creates a `vX.Y.Z` tag and a GitHub Release (notes from commit subjects since the previous tag)
-4. Builds production bundles for macOS (arm64 + x64), Linux x64, and Windows x64 (NSIS setup.exe **and** MSI), then attaches them to that release
+3. Creates a draft `vX.Y.Z` GitHub Release (notes from commit subjects since the previous tag)
+4. Builds production bundles for macOS (arm64 + x64), Linux x64, and Windows x64 (NSIS setup.exe **and** MSI), then attaches them to that draft
+5. Publishes the release (immutable releases lock assets only after publish)
 
 Example titles: `MINOR add dark mode default`, `MAJOR redesign library schema`, `add filter sidebar` (patch).
 
