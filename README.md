@@ -73,7 +73,15 @@ Example titles: `MINOR add dark mode default`, `MAJOR redesign library schema`, 
 
 Manual runs: pick `patch`, `minor`, or `major` in the workflow form.
 
-Repo Settings → Actions → General → Workflow permissions must allow **Read and write** so the workflow can push the version commit, tag, and release assets.
+### Release token (required)
+
+`main` requires PRs, so the default `GITHUB_TOKEN` cannot push the version bump. Create a PAT for a **repo admin** and store it as the Actions secret `RELEASE_GITHUB_TOKEN`:
+
+1. GitHub → Settings → Developer settings → Personal access tokens
+2. Classic: enable the `repo` scope. Fine-grained: this repository, Contents **Read and write**
+3. Repo → Settings → Secrets and variables → Actions → New repository secret → name `RELEASE_GITHUB_TOKEN`
+
+Repo Settings → Actions → General → Workflow permissions should still allow **Read and write** for PR checks and other jobs.
 
 ### Windows installers and library path
 
