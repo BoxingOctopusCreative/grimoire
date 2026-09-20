@@ -91,13 +91,26 @@ jobs:
       tag: ${{ steps.bump.outputs.tag }}
       release_id: ${{ steps.create_release.outputs.id }}
     steps:
+      # Admin PAT bypasses "require PR" on main (GITHUB_TOKEN cannot).
+      # Repo secret: RELEASE_GITHUB_TOKEN (classic repo scope, or fine-grained Contents R/W).
+      - name: Require release token
+        env:
+          RELEASE_GITHUB_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN }}
+        run: |
+          if [[ -z "${RELEASE_GITHUB_TOKEN}" ]]; then
+            echo "Missing secret RELEASE_GITHUB_TOKEN." >&2
+            echo "Create a PAT for a repo admin (classic: repo scope, or fine-grained: Contents Read/Write)," >&2
+            echo "then add it as Settings → Secrets and variables → Actions → RELEASE_GITHUB_TOKEN." >&2
+            exit 1
+          fi
+
       - name: Checkout base branch
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || github.ref_name }}
           fetch-depth: 0
           fetch-tags: true
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_GITHUB_TOKEN }}
 
       - name: Configure git
         run: |
@@ -177,7 +190,7 @@ jobs:
       - name: Create GitHub release
         id: create_release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN }}
           TAG: ${{ steps.bump.outputs.tag }}
           NOTES_FILE: ${{ steps.notes.outputs.path }}
         run: |
@@ -259,7 +272,7 @@ jobs:
       - name: Build and upload to release
         uses: tauri-apps/tauri-action@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN }}
         with:
           tagName: ${{ needs.version-and-release.outputs.tag }}
           releaseId: ${{ needs.version-and-release.outputs.release_id }}
