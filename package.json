@@ -1,6 +1,6 @@
 {
   "name": "grimoire",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Grimoire - eBook collection manager",
   "type": "module",
   "scripts": {
