@@ -273,6 +273,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build and upload to draft release
+        if: matrix.platform != 'macos-latest'
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN }}
@@ -282,6 +283,43 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      # macOS: build first, inject Gatekeeper installer into the DMG, then upload.
+      - name: Build macOS bundles
+        id: build_mac
+        if: matrix.platform == 'macos-latest'
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN }}
+        with:
+          args: ${{ matrix.args }}
+
+      - name: Add Gatekeeper installer to macOS DMG
+        if: matrix.platform == 'macos-latest'
+        run: |
+          chmod +x .github/scripts/inject-macos-dmg-installer.sh \
+            "src-tauri/macos/Install Grimoire.command"
+          .github/scripts/inject-macos-dmg-installer.sh
+
+      - name: Upload macOS release assets
+        if: matrix.platform == 'macos-latest'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.version-and-release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mapfile -t ASSETS < <(find src-tauri/target -type f \( \
+            -path '*/bundle/dmg/*.dmg' -o \
+            -path '*/bundle/macos/*.tar.gz' \
+          \) ! -name 'rw.*.dmg' | sort -u)
+          if [[ ${#ASSETS[@]} -eq 0 ]]; then
+            echo "No macOS bundle artifacts found to upload" >&2
+            exit 1
+          fi
+          printf 'Uploading:\n'
+          printf '  %s\n' "${ASSETS[@]}"
+          gh release upload "${TAG}" "${ASSETS[@]}" --clobber
 
   publish-release:
     name: Publish release

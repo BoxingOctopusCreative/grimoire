@@ -1,0 +1,18 @@
+How to install Grimoire (macOS)
+================================
+
+If macOS says Grimoire is “damaged and can’t be opened”, that is Gatekeeper
+blocking an unsigned download. It is not a corrupt file.
+
+Recommended:
+  1. Open this disk image
+  2. Double-click “Install Grimoire.command”
+     (If macOS blocks the script: right-click it → Open → Open)
+  3. The installer clears Gatekeeper quarantine, copies Grimoire to
+     Applications, and launches it
+
+Manual alternative (Terminal):
+  xattr -cr /Applications/Grimoire.app
+
+After you have an Apple Developer account, signed + notarized builds will not
+need this step.
