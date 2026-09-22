@@ -7,3 +7,7 @@ allowBuilds:
   core-js: true
   es5-ext: true
   esbuild: true
+
+# Force patched xmldom (epubjs still pins ^0.7.5; Dependabot high alerts).
+overrides:
+  "@xmldom/xmldom": "0.8.15"
