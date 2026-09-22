@@ -111,12 +111,16 @@ endif
 # Native production build for the machine you are on.
 build: ensure-frontend clean-dmg-mounts
 	$(TAURI) build $(TAURI_BUILD_FLAGS)
+ifeq ($(HOST_OS),Darwin)
+	.github/scripts/inject-macos-dmg-installer.sh
+endif
 
 # --- macOS -------------------------------------------------------------------
 
 build-mac: ensure-frontend ensure-mac-targets clean-dmg-mounts
 ifeq ($(HOST_OS),Darwin)
 	$(TAURI) build $(TAURI_BUILD_FLAGS) --target $(MAC_TARGET)
+	.github/scripts/inject-macos-dmg-installer.sh
 else
 	$(error macOS builds require a Darwin host (got $(HOST_OS)))
 endif
@@ -125,6 +129,7 @@ build-mac-arm: ensure-frontend clean-dmg-mounts
 ifeq ($(HOST_OS),Darwin)
 	@$(RUSTUP) target add $(MAC_ARM_TARGET)
 	$(TAURI) build $(TAURI_BUILD_FLAGS) --target $(MAC_ARM_TARGET)
+	.github/scripts/inject-macos-dmg-installer.sh
 else
 	$(error macOS builds require a Darwin host (got $(HOST_OS)))
 endif
@@ -133,6 +138,7 @@ build-mac-intel: ensure-frontend clean-dmg-mounts
 ifeq ($(HOST_OS),Darwin)
 	@$(RUSTUP) target add $(MAC_INTEL_TARGET)
 	$(TAURI) build $(TAURI_BUILD_FLAGS) --target $(MAC_INTEL_TARGET)
+	.github/scripts/inject-macos-dmg-installer.sh
 else
 	$(error macOS builds require a Darwin host (got $(HOST_OS)))
 endif

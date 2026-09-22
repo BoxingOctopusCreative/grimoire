@@ -93,6 +93,9 @@ Windows releases include both:
 
 Both write `%APPDATA%\grimoire\config.json` only when that file does not already exist, so upgrades keep an existing library path.
 
+### macOS install (unsigned builds)
+
+Release DMGs are not Apple-notarized yet. Gatekeeper may say Grimoire is “damaged.” Open the DMG and double-click **Install Grimoire.command** (right-click → Open if needed). That clears quarantine, installs to Applications, and launches the app.
 ## Library layout
 
 When you choose a library folder, Grimoire writes:
