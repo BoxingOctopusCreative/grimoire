@@ -1,6 +1,6 @@
 [package]
 name = "grimoire"
-version = "0.1.4"
+version = "0.1.5"
 description = "Grimoire - eBook collection manager"
 authors = ["you"]
 edition = "2021"
