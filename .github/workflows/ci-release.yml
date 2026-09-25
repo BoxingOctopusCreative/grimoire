@@ -309,7 +309,11 @@ jobs:
           TAG: ${{ needs.version-and-release.outputs.tag }}
         run: |
           set -euo pipefail
-          mapfile -t ASSETS < <(find src-tauri/target -type f \( \
+          # bash 3.2 on macOS has no mapfile; use a while-read loop instead.
+          ASSETS=()
+          while IFS= read -r asset; do
+            ASSETS+=("$asset")
+          done < <(find src-tauri/target -type f \( \
             -path '*/bundle/dmg/*.dmg' -o \
             -path '*/bundle/macos/*.tar.gz' \
           \) ! -name 'rw.*.dmg' | sort -u)
