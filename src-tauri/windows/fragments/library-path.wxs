@@ -15,7 +15,7 @@
     <CustomAction
       Id="SetGrimoireLibraryPath"
       Directory="TARGETDIR"
-      ExeCommand="powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;$ErrorActionPreference='Stop'; $p='[LIBRARYPATH]'; if ([string]::IsNullOrWhiteSpace($p)) { $p = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Grimoire' }; New-Item -ItemType Directory -Force -Path $p | Out-Null; $d = Join-Path $env:APPDATA 'grimoire'; New-Item -ItemType Directory -Force -Path $d | Out-Null; $c = Join-Path $d 'config.json'; if (-not (Test-Path -LiteralPath $c)) { (@{ library_path = $p } | ConvertTo-Json) | Set-Content -LiteralPath $c -Encoding utf8 }&quot;"
+      ExeCommand="powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;$ErrorActionPreference='Stop'; $p='[LIBRARYPATH]'; if ([string]::IsNullOrWhiteSpace($p)) { $p = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Grimoire' }; New-Item -ItemType Directory -Force -Path $p | Out-Null; $d = Join-Path $env:APPDATA 'grimoire'; New-Item -ItemType Directory -Force -Path $d | Out-Null; $c = Join-Path $d 'config.json'; if (-not (Test-Path -LiteralPath $c)) { $j = (@{ library_path = $p } | ConvertTo-Json); [System.IO.File]::WriteAllText($c, $j, [System.Text.UTF8Encoding]::new($false)) }&quot;"
       Execute="immediate"
       Impersonate="yes"
       Return="ignore"

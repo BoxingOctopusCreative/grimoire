@@ -34,5 +34,8 @@ if (Test-Path -LiteralPath $cfgPath) {
   exit 0
 }
 
-@{ library_path = $LibraryPath } | ConvertTo-Json | Set-Content -LiteralPath $cfgPath -Encoding utf8
+# UTF-8 without BOM. Windows PowerShell 5.1's Set-Content -Encoding utf8 adds a
+# BOM that serde_json rejects ("expected value at line 1 column 1").
+$json = @{ library_path = $LibraryPath } | ConvertTo-Json
+[System.IO.File]::WriteAllText($cfgPath, $json, [System.Text.UTF8Encoding]::new($false))
 Write-Host "Wrote initial Grimoire library path: $LibraryPath"
