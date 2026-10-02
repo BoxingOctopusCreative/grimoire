@@ -24,6 +24,10 @@ IS_WINDOWS := $(if $(filter Windows_NT,$(OS)),1,$(if $(findstring MINGW,$(HOST_O
 # Production flags: release mode (tauri build default) and non-interactive CI mode.
 TAURI_BUILD_FLAGS ?= --ci
 
+# Optional env file for local Apple signing / notarization (see .env.example).
+# Usage: make build-mac   or   make build-mac ENV_FILE=.env.apple
+ENV_FILE ?= .env
+
 # Platform triples
 MAC_TARGET       ?= universal-apple-darwin
 MAC_ARM_TARGET   ?= aarch64-apple-darwin
@@ -56,6 +60,12 @@ help:
 	@echo "  make test-rust          Run cargo test in src-tauri"
 	@echo "  make clean              Remove frontend and Rust build outputs"
 	@echo "  make clean-dmg-mounts   Unmount leftover Tauri DMG staging volumes (macOS)"
+	@echo ""
+	@echo "Apple signing (macOS): copy .env.example to .env and fill values, then"
+	@echo "  make build-mac"
+	@echo "Or: make build-mac ENV_FILE=/path/to/your.env"
+	@echo "When APPLE_SIGNING_IDENTITY or APPLE_CERTIFICATE is set, the Gatekeeper"
+	@echo "DMG inject is skipped so notarization stays valid."
 	@echo ""
 	@echo "Run each platform target on that OS when possible. Windows can be"
 	@echo "cross-built from macOS/Linux with cargo-xwin + NSIS + LLVM."
@@ -108,19 +118,37 @@ else
 	@echo "clean-dmg-mounts is only needed on macOS"
 endif
 
+# Load ENV_FILE (if present), run tauri build, then inject Gatekeeper helpers only
+# when Apple signing env is absent (injecting after notarize breaks the ticket).
+define tauri-build-macos
+	set -euo pipefail; \
+	if [ -f "$(ENV_FILE)" ]; then \
+		echo "Loading $(ENV_FILE)"; \
+		set -a; \
+		. "./$(ENV_FILE)"; \
+		set +a; \
+	fi; \
+	$(TAURI) build $(TAURI_BUILD_FLAGS) $(1); \
+	if [ -n "$${APPLE_SIGNING_IDENTITY:-}" ] || [ -n "$${APPLE_CERTIFICATE:-}" ]; then \
+		echo "Skipping Gatekeeper DMG inject (Apple signing env is set)"; \
+	else \
+		.github/scripts/inject-macos-dmg-installer.sh; \
+	fi
+endef
+
 # Native production build for the machine you are on.
 build: ensure-frontend clean-dmg-mounts
-	$(TAURI) build $(TAURI_BUILD_FLAGS)
 ifeq ($(HOST_OS),Darwin)
-	.github/scripts/inject-macos-dmg-installer.sh
+	$(call tauri-build-macos,)
+else
+	$(TAURI) build $(TAURI_BUILD_FLAGS)
 endif
 
 # --- macOS -------------------------------------------------------------------
 
 build-mac: ensure-frontend ensure-mac-targets clean-dmg-mounts
 ifeq ($(HOST_OS),Darwin)
-	$(TAURI) build $(TAURI_BUILD_FLAGS) --target $(MAC_TARGET)
-	.github/scripts/inject-macos-dmg-installer.sh
+	$(call tauri-build-macos,--target $(MAC_TARGET))
 else
 	$(error macOS builds require a Darwin host (got $(HOST_OS)))
 endif
@@ -128,8 +156,7 @@ endif
 build-mac-arm: ensure-frontend clean-dmg-mounts
 ifeq ($(HOST_OS),Darwin)
 	@$(RUSTUP) target add $(MAC_ARM_TARGET)
-	$(TAURI) build $(TAURI_BUILD_FLAGS) --target $(MAC_ARM_TARGET)
-	.github/scripts/inject-macos-dmg-installer.sh
+	$(call tauri-build-macos,--target $(MAC_ARM_TARGET))
 else
 	$(error macOS builds require a Darwin host (got $(HOST_OS)))
 endif
@@ -137,8 +164,7 @@ endif
 build-mac-intel: ensure-frontend clean-dmg-mounts
 ifeq ($(HOST_OS),Darwin)
 	@$(RUSTUP) target add $(MAC_INTEL_TARGET)
-	$(TAURI) build $(TAURI_BUILD_FLAGS) --target $(MAC_INTEL_TARGET)
-	.github/scripts/inject-macos-dmg-installer.sh
+	$(call tauri-build-macos,--target $(MAC_INTEL_TARGET))
 else
 	$(error macOS builds require a Darwin host (got $(HOST_OS)))
 endif

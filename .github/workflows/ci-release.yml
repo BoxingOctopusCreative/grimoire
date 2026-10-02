@@ -272,6 +272,42 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # Developer ID cert + App Store Connect API key for signing and notarization.
+      # Do not inject files into the DMG after this; that would break the notarization ticket.
+      - name: Prepare Apple signing and notarization
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_CONTENTS: ${{ secrets.APPLE_API_KEY_CONTENTS }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in \
+            APPLE_CERTIFICATE \
+            APPLE_CERTIFICATE_PASSWORD \
+            APPLE_SIGNING_IDENTITY \
+            APPLE_API_KEY \
+            APPLE_API_ISSUER \
+            APPLE_API_KEY_CONTENTS
+          do
+            if [[ -z "${!name}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "Missing Apple signing secrets: ${missing[*]}" >&2
+            echo "Add them under Settings → Secrets and variables → Actions." >&2
+            exit 1
+          fi
+          KEY_PATH="${RUNNER_TEMP}/AuthKey_${APPLE_API_KEY}.p8"
+          printf '%s\n' "$APPLE_API_KEY_CONTENTS" > "$KEY_PATH"
+          echo "APPLE_API_KEY_PATH=${KEY_PATH}" >> "$GITHUB_ENV"
+          echo "Wrote App Store Connect API key to ${KEY_PATH}"
+
       - name: Build and upload to draft release
         if: matrix.platform != 'macos-latest'
         uses: tauri-apps/tauri-action@v1
@@ -284,22 +320,20 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }}
 
-      # macOS: build first, inject Gatekeeper installer into the DMG, then upload.
       - name: Build macOS bundles
         id: build_mac
         if: matrix.platform == 'macos-latest'
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
         with:
           args: ${{ matrix.args }}
-
-      - name: Add Gatekeeper installer to macOS DMG
-        if: matrix.platform == 'macos-latest'
-        run: |
-          chmod +x .github/scripts/inject-macos-dmg-installer.sh \
-            "src-tauri/macos/Install Grimoire.command"
-          .github/scripts/inject-macos-dmg-installer.sh
 
       - name: Upload macOS release assets
         if: matrix.platform == 'macos-latest'

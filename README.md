@@ -40,10 +40,12 @@ Or use the Makefile for production platform builds:
 
 ```bash
 make build          # current host
-make build-mac      # macOS universal
+make build-mac      # macOS universal (loads .env for Apple signing if present)
 make build-windows  # Windows x64
 make build-linux    # Linux x64 (Linux host)
 ```
+
+For a signed and notarized local macOS build, copy `.env.example` to `.env`, fill in the Apple values, then run `make build-mac`. See that file for variable notes.
 
 Run `make help` for the full target list. Artifacts are under `src-tauri/target/.../release/bundle/`.
 
@@ -67,7 +69,7 @@ Every pull request runs the test suite. When a PR is **merged**, or when you run
    - Title starts with `MINOR` → minor bump (`1.2.3` → `1.3.0`)
    - Title starts with `PATCH`, or anything else → patch bump (`1.2.3` → `1.2.4`)
 3. Creates a draft `vX.Y.Z` GitHub Release (notes from commit subjects since the previous tag)
-4. Builds production bundles for macOS (arm64 + x64), Linux x64, and Windows x64 (NSIS setup.exe **and** MSI), then attaches them to that draft
+4. Builds production bundles for macOS (arm64 + x64, signed and notarized), Linux x64, and Windows x64 (NSIS setup.exe **and** MSI), then attaches them to that draft
 5. Publishes the release (immutable releases lock assets only after publish)
 
 Example titles: `MINOR add dark mode default`, `MAJOR redesign library schema`, `add filter sidebar` (patch).
@@ -84,6 +86,21 @@ Manual runs: pick `patch`, `minor`, or `major` in the workflow form.
 
 Repo Settings → Actions → General → Workflow permissions should still allow **Read and write** for PR checks and other jobs.
 
+### macOS signing and notarization (required for release builds)
+
+macOS release jobs sign with a **Developer ID Application** certificate and notarize via the App Store Connect API. Add these Actions secrets:
+
+| Secret | Value |
+| --- | --- |
+| `APPLE_CERTIFICATE` | Base64-encoded `.p12` (`openssl base64 -A -in cert.p12 -out cert-base64.txt`) |
+| `APPLE_CERTIFICATE_PASSWORD` | Password used when exporting the `.p12` |
+| `APPLE_SIGNING_IDENTITY` | Full identity string from `security find-identity -v -p codesigning` |
+| `APPLE_API_KEY` | App Store Connect API Key ID |
+| `APPLE_API_ISSUER` | App Store Connect Issuer ID |
+| `APPLE_API_KEY_CONTENTS` | Full contents of the downloaded `.p8` private key |
+
+See [Tauri macOS code signing](https://v2.tauri.app/distribute/sign/macos/) for creating the certificate and API key. Signed and notarized DMGs open normally; drag Grimoire into Applications.
+
 ### Windows installers and library path
 
 Windows releases include both:
@@ -93,9 +110,6 @@ Windows releases include both:
 
 Both write `%APPDATA%\grimoire\config.json` only when that file does not already exist, so upgrades keep an existing library path.
 
-### macOS install (unsigned builds)
-
-Release DMGs are not Apple-notarized yet. Gatekeeper may say Grimoire is “damaged.” Open the DMG and double-click **Install Grimoire.command** (right-click → Open if needed). That clears quarantine, installs to Applications, and launches the app.
 ## Library layout
 
 When you choose a library folder, Grimoire writes:
