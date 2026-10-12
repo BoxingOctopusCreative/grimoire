@@ -1,126 +1,113 @@
-# Grimoire production builds (Tauri 2 release bundles)
+# Grimoire release builds.
 #
 # Usage:
 #   make help
-#   make build              # current host
-#   make build-mac          # macOS (universal by default)
-#   make build-windows      # Windows x64 (NSIS when cross-compiling)
-#   make build-linux        # Linux x64
-#
-# Bundles land under src-tauri/target/<triple>/release/bundle/
-# (or src-tauri/target/release/bundle/ for a native host build).
+#   make build              # release binary for this machine
+#   make build-mac          # macOS .app and DMG (loads .env for signing)
+#   make build-windows      # Windows x64, on Windows
+#   make build-linux        # Linux x64, on Linux
 
-PNPM       ?= pnpm
-TAURI      ?= $(PNPM) exec tauri
-CARGO_XWIN ?= cargo-xwin
-RUSTUP     ?= rustup
+CARGO ?= cargo
 
 HOST_OS   := $(shell uname -s 2>/dev/null || echo unknown)
 HOST_ARCH := $(shell uname -m 2>/dev/null || echo unknown)
 
-# True on native Windows (cmd/PowerShell make) or MSYS/MinGW shells.
 IS_WINDOWS := $(if $(filter Windows_NT,$(OS)),1,$(if $(findstring MINGW,$(HOST_OS)),1,$(if $(findstring MSYS,$(HOST_OS)),1,$(if $(findstring CYGWIN,$(HOST_OS)),1,))))
 
-# Production flags: release mode (tauri build default) and non-interactive CI mode.
-TAURI_BUILD_FLAGS ?= --ci
-
 # Optional env file for local Apple signing / notarization (see .env.example).
-# Usage: make build-mac   or   make build-mac ENV_FILE=.env.apple
 ENV_FILE ?= .env
 
-# Platform triples
-MAC_TARGET       ?= universal-apple-darwin
 MAC_ARM_TARGET   ?= aarch64-apple-darwin
 MAC_INTEL_TARGET ?= x86_64-apple-darwin
 WIN_TARGET       ?= x86_64-pc-windows-msvc
 LINUX_TARGET     ?= x86_64-unknown-linux-gnu
-LINUX_ARM_TARGET ?= aarch64-unknown-linux-gnu
 
-.PHONY: help install build test test-frontend test-rust \
+ifeq ($(HOST_ARCH),x86_64)
+MAC_ARCH_LABEL := macos_x64
+else
+MAC_ARCH_LABEL := macos_arm64
+endif
+
+.PHONY: help build test test-rust \
 	build-mac build-mac-arm build-mac-intel \
-	build-windows build-linux build-linux-arm \
-	ensure-frontend ensure-mac-targets ensure-windows-target ensure-linux-target \
-	ensure-cargo-xwin clean-dmg-mounts clean
+	build-windows build-linux \
+	clean
 
 .DEFAULT_GOAL := help
 
 help:
-	@echo "Grimoire production builds"
+	@echo "Grimoire release builds"
 	@echo ""
-	@echo "  make build              Build for the current host ($(HOST_OS)/$(HOST_ARCH))"
-	@echo "  make build-mac          macOS universal (arm64 + x86_64)"
-	@echo "  make build-mac-arm      macOS Apple Silicon only"
-	@echo "  make build-mac-intel    macOS Intel only"
-	@echo "  make build-windows      Windows x64"
-	@echo "  make build-linux        Linux x64"
-	@echo "  make build-linux-arm    Linux arm64"
-	@echo "  make install            Install frontend deps and common Rust targets"
-	@echo "  make test               Run frontend + Rust automated tests"
-	@echo "  make test-frontend      Run Vitest suite"
-	@echo "  make test-rust          Run cargo test in src-tauri"
-	@echo "  make clean              Remove frontend and Rust build outputs"
-	@echo "  make clean-dmg-mounts   Unmount leftover Tauri DMG staging volumes (macOS)"
+	@echo "  make build              Release binary for this machine ($(HOST_OS)/$(HOST_ARCH))"
+	@echo "  make build-mac          macOS disk image for this machine"
+	@echo "  make build-mac-arm      macOS Apple Silicon disk image"
+	@echo "  make build-mac-intel    macOS Intel disk image"
+	@echo "  make build-windows      Windows x64 executable"
+	@echo "  make build-linux        Linux x64 executable"
+	@echo "  make test               Run cargo test"
+	@echo "  make clean              Remove Rust build outputs and dist/"
 	@echo ""
 	@echo "Apple signing (macOS): copy .env.example to .env and fill values, then"
 	@echo "  make build-mac"
 	@echo "Or: make build-mac ENV_FILE=/path/to/your.env"
-	@echo "When APPLE_SIGNING_IDENTITY or APPLE_CERTIFICATE is set, the Gatekeeper"
-	@echo "DMG inject is skipped so notarization stays valid."
+	@echo "CI reads the signing identity from APPLE_CERTIFICATE. For local Keychain"
+	@echo "signing, set APPLE_SIGNING_IDENTITY in .env."
 	@echo ""
-	@echo "Run each platform target on that OS when possible. Windows can be"
-	@echo "cross-built from macOS/Linux with cargo-xwin + NSIS + LLVM."
-	@echo "Linux GUI deps (WebKitGTK, etc.) require a Linux host or matching sysroot."
+	@echo "Linux builds need Wayland, xkbcommon, and fontconfig."
 
-install: ensure-frontend
-	@$(RUSTUP) target add \
-		$(MAC_ARM_TARGET) \
-		$(MAC_INTEL_TARGET) \
-		$(WIN_TARGET) \
-		$(LINUX_TARGET) \
-		$(LINUX_ARM_TARGET) || true
-
-ensure-frontend:
-	$(PNPM) install
-
-# --- tests -------------------------------------------------------------------
-
-test: test-frontend test-rust
-
-test-frontend:
-	$(PNPM) test
+test: test-rust
 
 test-rust:
-	cargo test --manifest-path src-tauri/Cargo.toml
+	$(CARGO) test --manifest-path app/Cargo.toml
 
-ensure-mac-targets:
-	@$(RUSTUP) target add $(MAC_ARM_TARGET) $(MAC_INTEL_TARGET)
+build:
+	$(CARGO) build --manifest-path app/Cargo.toml --release --bin Grimoire
 
-ensure-windows-target:
-	@$(RUSTUP) target add $(WIN_TARGET)
-
-ensure-linux-target:
-	@$(RUSTUP) target add $(LINUX_TARGET)
-
-ensure-cargo-xwin:
-	@command -v $(CARGO_XWIN) >/dev/null 2>&1 || cargo install cargo-xwin --locked
-
-# Stale create-dmg mounts (/Volumes/dmg.*) break subsequent `tauri build` DMG steps.
-clean-dmg-mounts:
+build-mac:
 ifeq ($(HOST_OS),Darwin)
-	@for vol in /Volumes/dmg.* /Volumes/Grimoire*; do \
-		if [ -e "$$vol" ]; then \
-			echo "Detaching $$vol"; \
-			hdiutil detach "$$vol" -force >/dev/null 2>&1 || true; \
-		fi; \
-	done
-	@find src-tauri/target -maxdepth 5 -name 'rw.*.dmg' -delete 2>/dev/null || true
+	$(CARGO) build --manifest-path app/Cargo.toml --release --bin Grimoire
+	$(call sign-and-package,app/target/release/Grimoire,$(MAC_ARCH_LABEL))
 else
-	@echo "clean-dmg-mounts is only needed on macOS"
+	$(error macOS builds require a Darwin host (got $(HOST_OS)))
 endif
 
-# Load ENV_FILE (if present), run tauri build, then inject Gatekeeper helpers only
-# when Apple signing env is absent (injecting after notarize breaks the ticket).
-define tauri-build-macos
+build-mac-arm:
+ifeq ($(HOST_OS),Darwin)
+	rustup target add $(MAC_ARM_TARGET)
+	$(CARGO) build --manifest-path app/Cargo.toml --release --bin Grimoire --target $(MAC_ARM_TARGET)
+	$(call sign-and-package,app/target/$(MAC_ARM_TARGET)/release/Grimoire,macos_arm64)
+else
+	$(error macOS builds require a Darwin host (got $(HOST_OS)))
+endif
+
+build-mac-intel:
+ifeq ($(HOST_OS),Darwin)
+	rustup target add $(MAC_INTEL_TARGET)
+	$(CARGO) build --manifest-path app/Cargo.toml --release --bin Grimoire --target $(MAC_INTEL_TARGET)
+	$(call sign-and-package,app/target/$(MAC_INTEL_TARGET)/release/Grimoire,macos_x64)
+else
+	$(error macOS builds require a Darwin host (got $(HOST_OS)))
+endif
+
+build-windows:
+ifeq ($(IS_WINDOWS),1)
+	$(CARGO) build --manifest-path app/Cargo.toml --release --bin Grimoire --target $(WIN_TARGET)
+else
+	$(error Windows builds require a Windows host (got $(HOST_OS)))
+endif
+
+build-linux:
+ifeq ($(HOST_OS),Linux)
+	$(CARGO) build --manifest-path app/Cargo.toml --release --bin Grimoire --target $(LINUX_TARGET)
+else
+	$(error Linux builds require a Linux host (got $(HOST_OS)))
+endif
+
+clean:
+	cd app && $(CARGO) clean
+	rm -rf dist
+
+define sign-and-package
 	set -euo pipefail; \
 	if [ -f "$(ENV_FILE)" ]; then \
 		echo "Loading $(ENV_FILE)"; \
@@ -128,85 +115,6 @@ define tauri-build-macos
 		. "./$(ENV_FILE)"; \
 		set +a; \
 	fi; \
-	$(TAURI) build $(TAURI_BUILD_FLAGS) $(1); \
-	if [ -n "$${APPLE_SIGNING_IDENTITY:-}" ] || [ -n "$${APPLE_CERTIFICATE:-}" ]; then \
-		echo "Skipping Gatekeeper DMG inject (Apple signing env is set)"; \
-	else \
-		.github/scripts/inject-macos-dmg-installer.sh; \
-	fi
+	chmod +x .github/scripts/package-macos.sh; \
+	.github/scripts/package-macos.sh "$(1)" dist "$(2)"
 endef
-
-# Native production build for the machine you are on.
-build: ensure-frontend clean-dmg-mounts
-ifeq ($(HOST_OS),Darwin)
-	$(call tauri-build-macos,)
-else
-	$(TAURI) build $(TAURI_BUILD_FLAGS)
-endif
-
-# --- macOS -------------------------------------------------------------------
-
-build-mac: ensure-frontend ensure-mac-targets clean-dmg-mounts
-ifeq ($(HOST_OS),Darwin)
-	$(call tauri-build-macos,--target $(MAC_TARGET))
-else
-	$(error macOS builds require a Darwin host (got $(HOST_OS)))
-endif
-
-build-mac-arm: ensure-frontend clean-dmg-mounts
-ifeq ($(HOST_OS),Darwin)
-	@$(RUSTUP) target add $(MAC_ARM_TARGET)
-	$(call tauri-build-macos,--target $(MAC_ARM_TARGET))
-else
-	$(error macOS builds require a Darwin host (got $(HOST_OS)))
-endif
-
-build-mac-intel: ensure-frontend clean-dmg-mounts
-ifeq ($(HOST_OS),Darwin)
-	@$(RUSTUP) target add $(MAC_INTEL_TARGET)
-	$(call tauri-build-macos,--target $(MAC_INTEL_TARGET))
-else
-	$(error macOS builds require a Darwin host (got $(HOST_OS)))
-endif
-
-# --- Windows -----------------------------------------------------------------
-
-# Native Windows builds produce both the NSIS setup.exe and the WiX MSI.
-# Cross-builds from macOS/Linux can only produce NSIS (MSI needs WiX on Windows).
-WIN_BUNDLES ?= nsis,msi
-
-build-windows: ensure-frontend ensure-windows-target
-ifeq ($(IS_WINDOWS),1)
-	$(TAURI) build $(TAURI_BUILD_FLAGS) --target $(WIN_TARGET) --bundles $(WIN_BUNDLES)
-else ifeq ($(HOST_OS),Darwin)
-	@$(MAKE) ensure-cargo-xwin
-	$(TAURI) build $(TAURI_BUILD_FLAGS) --runner $(CARGO_XWIN) --target $(WIN_TARGET) --bundles nsis
-else ifeq ($(HOST_OS),Linux)
-	@$(MAKE) ensure-cargo-xwin
-	$(TAURI) build $(TAURI_BUILD_FLAGS) --runner $(CARGO_XWIN) --target $(WIN_TARGET) --bundles nsis
-else
-	$(error Unsupported host for Windows builds: $(HOST_OS))
-endif
-
-# --- Linux -------------------------------------------------------------------
-
-build-linux: ensure-frontend ensure-linux-target
-ifeq ($(HOST_OS),Linux)
-	$(TAURI) build $(TAURI_BUILD_FLAGS) --target $(LINUX_TARGET)
-else
-	$(error Linux builds require a Linux host with WebKitGTK and related deps (got $(HOST_OS)))
-endif
-
-build-linux-arm: ensure-frontend
-ifeq ($(HOST_OS),Linux)
-	@$(RUSTUP) target add $(LINUX_ARM_TARGET)
-	$(TAURI) build $(TAURI_BUILD_FLAGS) --target $(LINUX_ARM_TARGET)
-else
-	$(error Linux builds require a Linux host with WebKitGTK and related deps (got $(HOST_OS)))
-endif
-
-# --- cleanup -----------------------------------------------------------------
-
-clean:
-	rm -rf build .svelte-kit
-	cd src-tauri && cargo clean

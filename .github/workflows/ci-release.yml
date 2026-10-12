@@ -42,26 +42,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Wayland, xkbcommon, and fontconfig are what the GPUI window links.
       - name: Install Linux build deps
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            xdg-utils
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
+            pkg-config \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libfontconfig1-dev
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -69,16 +59,10 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: './src-tauri -> target'
-
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Frontend tests
-        run: pnpm test
+          workspaces: './app -> target'
 
       - name: Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+        run: cargo test --manifest-path app/Cargo.toml
 
   version-and-release:
     name: Tag and release
@@ -156,7 +140,7 @@ jobs:
             echo "Missing VERSION or TAG from bump step" >&2
             exit 1
           fi
-          git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
+          git add app/Cargo.toml app/Cargo.lock
           git commit -m "chore: release ${TAG}"
           git tag -a "${TAG}" -m "Release ${TAG}"
           git push origin "HEAD:${BASE_REF}"
@@ -216,20 +200,24 @@ jobs:
         include:
           - platform: macos-latest
             label: macOS arm64
-            args: --target aarch64-apple-darwin
+            cargo_args: --target aarch64-apple-darwin
             rust_targets: aarch64-apple-darwin
+            archive_suffix: macos_arm64
           - platform: macos-latest
             label: macOS x64
-            args: --target x86_64-apple-darwin
+            cargo_args: --target x86_64-apple-darwin
             rust_targets: x86_64-apple-darwin
+            archive_suffix: macos_x64
           - platform: ubuntu-22.04
             label: Linux x64
-            args: ''
+            cargo_args: ''
             rust_targets: ''
+            archive_suffix: linux_x64
           - platform: windows-latest
             label: Windows x64
-            args: --bundles nsis,msi
+            cargo_args: ''
             rust_targets: ''
+            archive_suffix: windows_x64
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout release tag
@@ -237,27 +225,17 @@ jobs:
         with:
           ref: ${{ needs.version-and-release.outputs.tag }}
 
+      # Wayland, xkbcommon, and fontconfig are what the GPUI window links.
       - name: Install Linux build deps
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            xdg-utils
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
+            pkg-config \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libfontconfig1-dev
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -267,19 +245,15 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: './src-tauri -> target'
-
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
+          workspaces: './app -> target'
 
       # Developer ID cert + App Store Connect API key for signing and notarization.
-      # Do not inject files into the DMG after this; that would break the notarization ticket.
+      # APPLE_SIGNING_IDENTITY is optional: when omitted, the package script uses the identity inside APPLE_CERTIFICATE.
       - name: Prepare Apple signing and notarization
         if: matrix.platform == 'macos-latest'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_CONTENTS: ${{ secrets.APPLE_API_KEY_CONTENTS }}
@@ -289,7 +263,6 @@ jobs:
           for name in \
             APPLE_CERTIFICATE \
             APPLE_CERTIFICATE_PASSWORD \
-            APPLE_SIGNING_IDENTITY \
             APPLE_API_KEY \
             APPLE_API_ISSUER \
             APPLE_API_KEY_CONTENTS
@@ -308,51 +281,56 @@ jobs:
           echo "APPLE_API_KEY_PATH=${KEY_PATH}" >> "$GITHUB_ENV"
           echo "Wrote App Store Connect API key to ${KEY_PATH}"
 
-      - name: Build and upload to draft release
-        if: matrix.platform != 'macos-latest'
-        uses: tauri-apps/tauri-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN }}
-        with:
-          tagName: ${{ needs.version-and-release.outputs.tag }}
-          releaseId: ${{ needs.version-and-release.outputs.release_id }}
-          releaseDraft: true
-          prerelease: false
-          args: ${{ matrix.args }}
+      - name: Build release binary
+        run: cargo build --manifest-path app/Cargo.toml --release --bin Grimoire ${{ matrix.cargo_args }}
 
-      - name: Build macOS bundles
-        id: build_mac
+      - name: Package macOS disk image
         if: matrix.platform == 'macos-latest'
-        uses: tauri-apps/tauri-action@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
-        with:
-          args: ${{ matrix.args }}
+        run: |
+          set -euo pipefail
+          chmod +x .github/scripts/package-macos.sh
+          .github/scripts/package-macos.sh \
+            "app/target/${{ matrix.rust_targets }}/release/Grimoire" \
+            dist \
+            "${{ matrix.archive_suffix }}"
 
-      - name: Upload macOS release assets
-        if: matrix.platform == 'macos-latest'
+      - name: Package Linux binary
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.version-and-release.outputs.version }}"
+          mkdir -p dist
+          tar -C app/target/release -czf "dist/Grimoire_${VERSION}_${{ matrix.archive_suffix }}.tar.gz" Grimoire
+
+      - name: Package Windows binary
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.version-and-release.outputs.version }}"
+          mkdir -p dist
+          tar -a -C app/target/release -cf "dist/Grimoire_${VERSION}_${{ matrix.archive_suffix }}.zip" Grimoire.exe
+
+      - name: Upload release asset
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.version-and-release.outputs.tag }}
         run: |
           set -euo pipefail
-          # bash 3.2 on macOS has no mapfile; use a while-read loop instead.
           ASSETS=()
           while IFS= read -r asset; do
             ASSETS+=("$asset")
-          done < <(find src-tauri/target -type f \( \
-            -path '*/bundle/dmg/*.dmg' -o \
-            -path '*/bundle/macos/*.tar.gz' \
-          \) ! -name 'rw.*.dmg' | sort -u)
+          done < <(find dist -type f | sort -u)
           if [[ ${#ASSETS[@]} -eq 0 ]]; then
-            echo "No macOS bundle artifacts found to upload" >&2
+            echo "No release artifacts found to upload" >&2
             exit 1
           fi
           printf 'Uploading:\n'

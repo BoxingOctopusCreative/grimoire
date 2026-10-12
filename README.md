@@ -1,6 +1,6 @@
 # Grimoire
 
-Cross-platform desktop eBook library manager built with [Tauri 2](https://v2.tauri.app/) and [SvelteKit](https://svelte.dev/). Local SQLite catalog, Calibre-style on-disk library layout, and USB/MTP Kindle sync (including Kindle Colorsoft).
+Cross-platform desktop eBook library manager. The window is a native [GPUI](https://gpui-kit.com/) app. The catalog is a local SQLite database with a Calibre-style layout on disk, plus USB/MTP sync for Kindles and other eReaders.
 
 ## Features (v0.1)
 
@@ -18,46 +18,41 @@ Cross-platform desktop eBook library manager built with [Tauri 2](https://v2.tau
 
 ## Requirements
 
-- Node.js 20+
-- pnpm
-- Rust toolchain (for Tauri)
-- Platform Tauri dependencies ([guide](https://v2.tauri.app/start/prerequisites/))
+- Rust toolchain
 
 ## Develop
 
 ```bash
-pnpm install
-pnpm tauri dev
+cargo run --manifest-path app/Cargo.toml --bin Grimoire
 ```
 
 ## Build
 
 ```bash
-pnpm tauri build
+cargo build --manifest-path app/Cargo.toml --release --bin Grimoire
 ```
 
-Or use the Makefile for production platform builds:
+Or use the Makefile:
 
 ```bash
-make build          # current host
-make build-mac      # macOS universal (loads .env for Apple signing if present)
-make build-windows  # Windows x64
+make build          # release binary for this machine
+make build-mac      # macOS disk image (loads .env for Apple signing if present)
+make build-windows  # Windows x64 (Windows host)
 make build-linux    # Linux x64 (Linux host)
 ```
 
 For a signed and notarized local macOS build, copy `.env.example` to `.env`, fill in the Apple values, then run `make build-mac`. See that file for variable notes.
 
-Run `make help` for the full target list. Artifacts are under `src-tauri/target/.../release/bundle/`.
+Run `make help` for the full target list. Disk images land in `dist/`. The release binary is under `app/target/release/`.
 
 ## Test
 
 ```bash
-make test           # Vitest + cargo test
-make test-frontend  # frontend unit tests
-make test-rust      # Rust unit/integration tests
+make test
+cargo test --manifest-path app/Cargo.toml
 ```
 
-Or: `pnpm test`, `pnpm test:rust`, `pnpm test:all`.
+The tests cover the catalog, conversion, Kindle detection, and the GPUI theme and reader-font choices.
 
 ## Release pipeline (GitHub Actions)
 
@@ -69,7 +64,7 @@ Every pull request runs the test suite. When a PR is **merged**, or when you run
    - Title starts with `MINOR` → minor bump (`1.2.3` → `1.3.0`)
    - Title starts with `PATCH`, or anything else → patch bump (`1.2.3` → `1.2.4`)
 3. Creates a draft `vX.Y.Z` GitHub Release (notes from commit subjects since the previous tag)
-4. Builds production bundles for macOS (arm64 + x64, signed and notarized), Linux x64, and Windows x64 (NSIS setup.exe **and** MSI), then attaches them to that draft
+4. Builds release binaries for macOS (arm64 + x64 disk images, signed and notarized), Linux x64, and Windows x64, then attaches them to that draft
 5. Publishes the release (immutable releases lock assets only after publish)
 
 Example titles: `MINOR add dark mode default`, `MAJOR redesign library schema`, `add filter sidebar` (patch).
@@ -94,21 +89,17 @@ macOS release jobs sign with a **Developer ID Application** certificate and nota
 | --- | --- |
 | `APPLE_CERTIFICATE` | Base64-encoded `.p12` (`openssl base64 -A -in cert.p12 -out cert-base64.txt`) |
 | `APPLE_CERTIFICATE_PASSWORD` | Password used when exporting the `.p12` |
-| `APPLE_SIGNING_IDENTITY` | Full identity string from `security find-identity -v -p codesigning` |
 | `APPLE_API_KEY` | App Store Connect API Key ID |
 | `APPLE_API_ISSUER` | App Store Connect Issuer ID |
 | `APPLE_API_KEY_CONTENTS` | Full contents of the downloaded `.p8` private key |
 
-See [Tauri macOS code signing](https://v2.tauri.app/distribute/sign/macos/) for creating the certificate and API key. Signed and notarized DMGs open normally; drag Grimoire into Applications.
+CI reads the signing identity from `APPLE_CERTIFICATE`, so do not set `APPLE_SIGNING_IDENTITY` in Actions (a mismatch fails the build). For local Keychain signing, set `APPLE_SIGNING_IDENTITY` in `.env` instead.
 
-### Windows installers and library path
+Create the Developer ID certificate and the App Store Connect API key in [Apple Developer](https://developer.apple.com/account) and [App Store Connect](https://appstoreconnect.apple.com/access/integrations/api). Signed and notarized DMGs open normally; drag Grimoire into Applications.
 
-Windows releases include both:
+### Windows
 
-- **NSIS** (`*-setup.exe`): interactive installs ask for the ebook library folder (default `Documents\Grimoire`). Silent/passive installs use that default, or `/LIBRARYPATH=D:\Books`.
-- **MSI** (WiX): seeds the same default library path. Override with `msiexec /i Grimoire_*.msi LIBRARYPATH="D:\Books"`.
-
-Both write `%APPDATA%\grimoire\config.json` only when that file does not already exist, so upgrades keep an existing library path.
+Windows releases are the `Grimoire.exe` binary. Choose the library folder in Settings. Grimoire writes `%APPDATA%\grimoire\config.json` and keeps that library path on later launches.
 
 ## Library layout
 
@@ -158,10 +149,7 @@ Other USB devices that identify as an eReader or ebook device may appear as a ge
 
 ### Device detection
 
-The Devices page keeps watching while the app is open:
-
-- **MTP hotplug:** connect/disconnect shows a toast; Devices and Send update quietly (no forced navigation)
-- **Mounted volumes:** polled every few seconds for Kobo (`.kobo`), Kindle (`documents` + `system`), reMarkable markers, and volume names that match known brands
+The Devices page checks for connected readers every few seconds. A notice appears when a reader connects or disconnects. Detection covers USB MTP devices and mounted volumes (Kobo, Kindle, reMarkable, and volume names that match known brands).
 
 ### Device library
 
@@ -193,9 +181,9 @@ Kindles usually appear through the Windows Portable Devices stack with no extra 
 
 ## Project layout
 
-- `src/` - SvelteKit SPA UI
-- `src-tauri/` - Rust backend (SQLite, import, conversion, MTP)
-- `src-tauri/migrations/` - SQL schema migrations
+- `app/` - Rust app (GPUI window, SQLite catalog, import, conversion, MTP)
+- `app/migrations/` - SQL schema migrations
+- `static/` - in-app icon artwork
 
 ## License
 

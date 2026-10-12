@@ -1,0 +1,56 @@
+[package]
+name = "grimoire"
+version = "0.1.9"
+description = "Grimoire - eBook collection manager"
+authors = ["you"]
+edition = "2021"
+license = "MPL-2.0"
+default-run = "Grimoire"
+
+[[bin]]
+name = "Grimoire"
+path = "src/main.rs"
+
+[lib]
+name = "grimoire_lib"
+
+[build-dependencies]
+embed-resource = "3"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled", "functions"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+anyhow = "1"
+dirs = "6"
+base64 = "0.22"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+sanitize-filename = "0.6"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "time"] }
+mtp-rs = "0.32"
+bytes = "1"
+futures = "0.3"
+parking_lot = "0.12"
+libc = "0.2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+kindling-mobi = "0.42"
+mobi = "0.8"
+rars = "0.9.4"
+gpui-kit = "0.7"
+rfd = "0.15"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "NSImage"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSData"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
