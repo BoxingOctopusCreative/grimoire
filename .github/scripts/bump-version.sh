@@ -33,8 +33,8 @@ CURRENT=""
 if LATEST_TAG="$(git describe --tags --match 'v*' --abbrev=0 2>/dev/null || true)" \
   && [[ -n "${LATEST_TAG}" ]]; then
   CURRENT="${LATEST_TAG#v}"
-elif [[ -f package.json ]]; then
-  CURRENT="$(node -pe 'require("./package.json").version')"
+elif [[ -f app/Cargo.toml ]]; then
+  CURRENT="$(sed -n 's/^version = "\(.*\)"/\1/p' app/Cargo.toml | head -1)"
 else
   CURRENT="0.0.0"
 fi
@@ -66,28 +66,12 @@ esac
 VERSION="${MAJOR}.${MINOR}.${PATCH}"
 TAG="v${VERSION}"
 
-node -e "
-const fs = require('fs');
-const path = 'package.json';
-const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
-pkg.version = process.argv[1];
-fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
-" "${VERSION}"
-
-node -e "
-const fs = require('fs');
-const path = 'src-tauri/tauri.conf.json';
-const conf = JSON.parse(fs.readFileSync(path, 'utf8'));
-conf.version = process.argv[1];
-fs.writeFileSync(path, JSON.stringify(conf, null, 2) + '\n');
-" "${VERSION}"
-
 # Replace only the package version line in Cargo.toml.
-perl -i -0pe 's/(?m)^(\[package\]\s*(?:(?!\[).)*?^version\s*=\s*)"[^"]*"/${1}"'"${VERSION}"'"/s' src-tauri/Cargo.toml
+perl -i -0pe 's/(?m)^(\[package\]\s*(?:(?!\[).)*?^version\s*=\s*)"[^"]*"/${1}"'"${VERSION}"'"/s' app/Cargo.toml
 
 # Keep Cargo.lock package stanza in sync when present.
-if [[ -f src-tauri/Cargo.lock ]]; then
-  perl -i -0pe 's/(name = "grimoire"\nversion = )"[^"]*"/${1}"'"${VERSION}"'"/' src-tauri/Cargo.lock
+if [[ -f app/Cargo.lock ]]; then
+  perl -i -0pe 's/(name = "grimoire"\nversion = )"[^"]*"/${1}"'"${VERSION}"'"/' app/Cargo.lock
 fi
 
 echo "VERSION=${VERSION}"
