@@ -43,11 +43,10 @@ pub fn resolve_reader_source(
     book_id: i64,
     preferred_format: Option<&str>,
 ) -> AppResult<ReaderSource> {
-    let title: String = conn.query_row(
-        "SELECT title FROM books WHERE id = ?1",
-        [book_id],
-        |row| row.get(0),
-    )?;
+    let title: String =
+        conn.query_row("SELECT title FROM books WHERE id = ?1", [book_id], |row| {
+            row.get(0)
+        })?;
 
     let mut authors = Vec::new();
     {
@@ -71,9 +70,12 @@ pub fn resolve_reader_source(
 
     let has_mobi = formats.iter().any(|f| f == "MOBI");
     let has_azw3_only = formats.iter().any(|f| f == "AZW3")
-        && !formats.iter().any(|f| RENDERABLE.contains(&f.as_str()) || f == "MOBI");
+        && !formats
+            .iter()
+            .any(|f| RENDERABLE.contains(&f.as_str()) || f == "MOBI");
 
-    let format = if let Some(preferred) = preferred_format.map(str::trim).filter(|s| !s.is_empty()) {
+    let format = if let Some(preferred) = preferred_format.map(str::trim).filter(|s| !s.is_empty())
+    {
         let upper = preferred.to_ascii_uppercase();
         if formats.iter().any(|f| f == &upper) && RENDERABLE.contains(&upper.as_str()) {
             upper
@@ -143,14 +145,10 @@ pub fn resolve_reader_source(
 fn book_format_list(conn: &Connection, book_id: i64) -> AppResult<Vec<String>> {
     let mut stmt = conn.prepare("SELECT format FROM formats WHERE book = ?1")?;
     let rows = stmt.query_map([book_id], |row| row.get(0))?;
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(Into::into)
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
-pub fn get_reading_progress(
-    conn: &Connection,
-    book_id: i64,
-) -> AppResult<Option<ReadingProgress>> {
+pub fn get_reading_progress(conn: &Connection, book_id: i64) -> AppResult<Option<ReadingProgress>> {
     conn.query_row(
         "SELECT book, format, location, percent, updated_at
          FROM reading_progress WHERE book = ?1",

@@ -358,9 +358,7 @@ pub fn extract_kf8_html(bytes: &[u8]) -> AppResult<Kf8Extract> {
         text_end = records.len();
     }
     if text_end <= text_start {
-        return Err(err(
-            "KF8 header reports no text records to decompress.",
-        ));
+        return Err(err("KF8 header reports no text records to decompress."));
     }
 
     let mut raw_html = Vec::with_capacity(text_record_count.saturating_mul(4096));

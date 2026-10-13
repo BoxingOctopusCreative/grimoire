@@ -33,30 +33,23 @@ fn migrate(conn: &Connection) -> AppResult<()> {
     if current < 1 {
         conn.execute_batch(MIGRATION_001)
             .map_err(|e| err(format!("Migration 001 failed: {e}")))?;
-        conn.execute(
-            "INSERT INTO schema_migrations (version) VALUES (1)",
-            [],
-        )?;
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (1)", [])?;
     }
 
     if current < 2 {
         conn.execute_batch(MIGRATION_002)
             .map_err(|e| err(format!("Migration 002 failed: {e}")))?;
-        conn.execute(
-            "INSERT INTO schema_migrations (version) VALUES (2)",
-            [],
-        )?;
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (2)", [])?;
     }
 
     Ok(())
 }
 
 pub fn refresh_fts(conn: &Connection, book_id: i64) -> AppResult<()> {
-    let title: String = conn.query_row(
-        "SELECT title FROM books WHERE id = ?1",
-        [book_id],
-        |row| row.get(0),
-    )?;
+    let title: String =
+        conn.query_row("SELECT title FROM books WHERE id = ?1", [book_id], |row| {
+            row.get(0)
+        })?;
 
     let mut authors = String::new();
     {

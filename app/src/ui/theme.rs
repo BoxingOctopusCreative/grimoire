@@ -1,5 +1,5 @@
 use gpui_kit::component::theme::{Theme, ThemeColor, ThemeMode};
-use gpui_kit::{App, Hsla, WindowAppearance, px, rgb};
+use gpui_kit::{px, rgb, App, Hsla, WindowAppearance};
 
 use crate::config::{load_config, set_theme_preference};
 
@@ -43,12 +43,20 @@ pub fn apply(pref: &str, cx: &mut App) {
         cx.set_window_appearance(Some(WindowAppearance::Light));
     }
     Theme::change(
-        if dark { ThemeMode::Dark } else { ThemeMode::Light },
+        if dark {
+            ThemeMode::Dark
+        } else {
+            ThemeMode::Light
+        },
         None,
         cx,
     );
     Theme::update(cx, |theme| {
-        theme.colors = if dark { dark_palette() } else { light_palette() };
+        theme.colors = if dark {
+            dark_palette()
+        } else {
+            light_palette()
+        };
         theme.font_family = UI_FONT.into();
         theme.font_size = px(15.);
         theme.radius = px(10.);

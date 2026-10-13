@@ -69,7 +69,9 @@ struct EditionDoc {
 fn http_client() -> AppResult<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
-        .user_agent("Grimoire/0.1 (ebook library manager; +https://github.com/BoxingOctopus/grimoire)")
+        .user_agent(
+            "Grimoire/0.1 (ebook library manager; +https://github.com/BoxingOctopus/grimoire)",
+        )
         .build()
         .map_err(|e| err(format!("Could not create HTTP client: {e}")))
 }
@@ -143,7 +145,10 @@ pub async fn lookup_book_candidates(
             .into_iter()
             .map(|(k, v)| (k.to_string(), v))
             .collect();
-        let refs: Vec<(&str, &str)> = owned.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let refs: Vec<(&str, &str)> = owned
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
 
         match search_docs(&client, &refs, max_results).await {
             Ok(items) => merge(items, &mut collected),
@@ -288,7 +293,11 @@ fn expand_doc(doc: SearchDoc) -> Vec<MetadataMatch> {
     let description = match doc.first_sentence {
         Some(FirstSentence::One(s)) => {
             let t = s.trim().to_string();
-            if t.is_empty() { None } else { Some(t) }
+            if t.is_empty() {
+                None
+            } else {
+                Some(t)
+            }
         }
         Some(FirstSentence::Many(list)) => list
             .into_iter()

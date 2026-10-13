@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use gpui_kit::Global;
@@ -5,7 +7,8 @@ use tokio::runtime::Handle;
 
 use crate::comic::comic_page_data_url;
 use crate::config::{
-    clear_library_path, load_config, set_library_path, set_reader_font, AppConfig,
+    clear_library_path, load_config, set_comic_layout, set_comic_zoom, set_library_path,
+    set_reader_colors, set_reader_font, set_reader_zoom, AppConfig,
 };
 use crate::convert::{
     convert_book_format, kindle_convert_available, list_convertible_targets, resolve_kindle_file,
@@ -91,7 +94,10 @@ pub fn list(state: &AppState, query: Option<&str>) -> AppResult<Vec<BookSummary>
     state.with_conn(|conn, _| list_books(conn, query))
 }
 
-pub fn covers_for(state: &AppState, books: &[BookSummary]) -> std::collections::HashMap<i64, PathBuf> {
+pub fn covers_for(
+    state: &AppState,
+    books: &[BookSummary],
+) -> std::collections::HashMap<i64, PathBuf> {
     let mut covers = std::collections::HashMap::new();
     let _ = state.with_conn(|conn, root| {
         for book in books {
@@ -126,7 +132,11 @@ pub fn remove_books(state: &AppState, ids: &[i64]) -> AppResult<BulkActionResult
     state.with_conn_mut(|conn, root| delete_ebooks(conn, root, ids))
 }
 
-pub fn patch_books(state: &AppState, ids: &[i64], patch: BookBulkPatch) -> AppResult<BulkActionResult> {
+pub fn patch_books(
+    state: &AppState,
+    ids: &[i64],
+    patch: BookBulkPatch,
+) -> AppResult<BulkActionResult> {
     state.with_conn_mut(|conn, root| bulk_patch_ebooks(conn, root, ids, &patch))
 }
 
@@ -142,11 +152,19 @@ pub fn reader_source(state: &AppState, id: i64) -> AppResult<ReaderSource> {
     state.with_conn_mut(|conn, root| resolve_reader_source(conn, root, id, None))
 }
 
+pub fn book_cover(state: &AppState, id: i64) -> AppResult<Option<PathBuf>> {
+    state.with_conn(|conn, root| cover_path(conn, root, id))
+}
+
 pub fn progress(state: &AppState, id: i64) -> AppResult<Option<ReadingProgress>> {
     state.with_conn(|conn, _| get_reading_progress(conn, id))
 }
 
-pub fn save_progress(state: &AppState, id: i64, update: ReadingProgressUpdate) -> AppResult<ReadingProgress> {
+pub fn save_progress(
+    state: &AppState,
+    id: i64,
+    update: ReadingProgressUpdate,
+) -> AppResult<ReadingProgress> {
     state.with_conn(|conn, _| save_reading_progress(conn, id, update))
 }
 
@@ -166,7 +184,10 @@ pub async fn scan_device(id: String) -> AppResult<DeviceLibrary> {
     scan_device_library(id).await
 }
 
-pub async fn delete_on_device(id: String, books: Vec<DeviceBookTarget>) -> AppResult<DeviceBulkResult> {
+pub async fn delete_on_device(
+    id: String,
+    books: Vec<DeviceBookTarget>,
+) -> AppResult<DeviceBulkResult> {
     delete_device_books(id, books).await
 }
 
@@ -248,6 +269,22 @@ pub fn save_reader_font(font: &str) -> AppResult<AppConfig> {
     set_reader_font(font)
 }
 
+pub fn save_reader_zoom(zoom: u32) -> AppResult<AppConfig> {
+    set_reader_zoom(zoom)
+}
+
+pub fn save_reader_colors(colors: &str) -> AppResult<AppConfig> {
+    set_reader_colors(colors)
+}
+
+pub fn save_comic_zoom(zoom: u32) -> AppResult<AppConfig> {
+    set_comic_zoom(zoom)
+}
+
+pub fn save_comic_layout(layout: &str) -> AppResult<AppConfig> {
+    set_comic_layout(layout)
+}
+
 pub fn isbn_of(book: &BookDetail) -> Option<String> {
     book.identifiers
         .iter()
@@ -289,4 +326,114 @@ pub fn extension_of(path: &Path) -> String {
         .and_then(|ext| ext.to_str())
         .unwrap_or("")
         .to_ascii_lowercase()
+}
+
+/// Expand dropped files and folders into supported ebook paths.
+///
+/// Directories are walked. Unsupported files, unreadable entries, and
+/// AppleDouble sidecars are skipped.
+pub fn collect_ebook_paths(paths: &[PathBuf]) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut seen_dirs = HashSet::new();
+    let mut seen_files = HashSet::new();
+    for path in paths {
+        walk_for_ebooks(path, &mut found, &mut seen_dirs, &mut seen_files, 0);
+    }
+    found
+}
+
+fn walk_for_ebooks(
+    path: &Path,
+    found: &mut Vec<PathBuf>,
+    seen_dirs: &mut HashSet<PathBuf>,
+    seen_files: &mut HashSet<PathBuf>,
+    depth: u32,
+) {
+    if depth > 32 {
+        return;
+    }
+    let Ok(meta) = fs::metadata(path) else {
+        return;
+    };
+    if meta.is_dir() {
+        if let Ok(canonical) = fs::canonicalize(path) {
+            if !seen_dirs.insert(canonical) {
+                return;
+            }
+        }
+        let Ok(entries) = fs::read_dir(path) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            if entry.file_name() == "__MACOSX" {
+                continue;
+            }
+            walk_for_ebooks(&entry.path(), found, seen_dirs, seen_files, depth + 1);
+        }
+        return;
+    }
+    if !meta.is_file() || !is_importable_ebook(path) {
+        return;
+    }
+    if let Ok(canonical) = fs::canonicalize(path) {
+        if !seen_files.insert(canonical) {
+            return;
+        }
+    }
+    found.push(path.to_path_buf());
+}
+
+fn is_importable_ebook(path: &Path) -> bool {
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("._"))
+    {
+        return false;
+    }
+    SUPPORTED_EXT.contains(&extension_of(path).as_str())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn names(paths: &[PathBuf]) -> Vec<String> {
+        let mut names: Vec<String> = paths
+            .iter()
+            .filter_map(|path| {
+                path.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn collect_ebook_paths_walks_folders_and_skips_other_files() {
+        let root = std::env::temp_dir().join(format!("grimoire-drop-{}", uuid::Uuid::new_v4()));
+        let nested = root.join("Author").join("Series");
+        fs::create_dir_all(&nested).unwrap();
+        fs::create_dir_all(root.join("__MACOSX")).unwrap();
+        fs::write(nested.join("Tale.EPUB"), b"epub").unwrap();
+        fs::write(nested.join("notes.md"), b"nope").unwrap();
+        fs::write(nested.join("._Tale.epub"), b"sidecar").unwrap();
+        fs::write(root.join("loose.pdf"), b"pdf").unwrap();
+        fs::write(root.join("cover.jpg"), b"jpg").unwrap();
+        fs::write(root.join("__MACOSX").join("Book.mobi"), b"junk").unwrap();
+
+        let found = collect_ebook_paths(&[
+            root.join("Author"),
+            root.join("loose.pdf"),
+            root.join("cover.jpg"),
+            root.join("missing.epub"),
+        ]);
+        assert_eq!(
+            names(&found),
+            vec!["Tale.EPUB".to_string(), "loose.pdf".to_string()]
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
 }

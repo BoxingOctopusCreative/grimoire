@@ -12,6 +12,18 @@ pub struct AppConfig {
     /// `publisher`, `serif`, `sans`, or `opendyslexic`.
     #[serde(default = "default_reader_font")]
     pub reader_font: String,
+    /// Text size as a percent of the default. Clamped when applied.
+    #[serde(default = "default_reader_zoom")]
+    pub reader_zoom: u32,
+    /// `native`, `ink`, `inverted`, or `paper`.
+    #[serde(default = "default_reader_colors")]
+    pub reader_colors: String,
+    /// Comic page size as a percent of the default. Clamped when applied.
+    #[serde(default = "default_comic_zoom")]
+    pub comic_zoom: u32,
+    /// `single` or `spread`.
+    #[serde(default = "default_comic_layout")]
+    pub comic_layout: String,
 }
 
 fn default_theme() -> String {
@@ -22,12 +34,32 @@ fn default_reader_font() -> String {
     "serif".into()
 }
 
+fn default_reader_zoom() -> u32 {
+    100
+}
+
+fn default_reader_colors() -> String {
+    "native".into()
+}
+
+fn default_comic_zoom() -> u32 {
+    100
+}
+
+fn default_comic_layout() -> String {
+    "single".into()
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             library_path: None,
             theme: default_theme(),
             reader_font: default_reader_font(),
+            reader_zoom: default_reader_zoom(),
+            reader_colors: default_reader_colors(),
+            comic_zoom: default_comic_zoom(),
+            comic_layout: default_comic_layout(),
         }
     }
 }
@@ -96,6 +128,34 @@ pub fn set_reader_font(font: &str) -> AppResult<AppConfig> {
     Ok(config)
 }
 
+pub fn set_reader_zoom(zoom: u32) -> AppResult<AppConfig> {
+    let mut config = load_config()?;
+    config.reader_zoom = zoom;
+    save_config(&config)?;
+    Ok(config)
+}
+
+pub fn set_reader_colors(colors: &str) -> AppResult<AppConfig> {
+    let mut config = load_config()?;
+    config.reader_colors = colors.to_string();
+    save_config(&config)?;
+    Ok(config)
+}
+
+pub fn set_comic_zoom(zoom: u32) -> AppResult<AppConfig> {
+    let mut config = load_config()?;
+    config.comic_zoom = zoom;
+    save_config(&config)?;
+    Ok(config)
+}
+
+pub fn set_comic_layout(layout: &str) -> AppResult<AppConfig> {
+    let mut config = load_config()?;
+    config.comic_layout = layout.to_string();
+    save_config(&config)?;
+    Ok(config)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,6 +173,10 @@ mod tests {
         assert!(config.library_path.is_none());
         assert_eq!(config.theme, "dark");
         assert_eq!(config.reader_font, "serif");
+        assert_eq!(config.reader_zoom, 100);
+        assert_eq!(config.reader_colors, "native");
+        assert_eq!(config.comic_zoom, 100);
+        assert_eq!(config.comic_layout, "single");
         let config = parse_config("\u{feff}").expect("BOM-only config should default");
         assert!(config.library_path.is_none());
     }
@@ -123,5 +187,9 @@ mod tests {
         assert_eq!(config.library_path.as_deref(), Some("C:\\Books"));
         assert_eq!(config.theme, "dark");
         assert_eq!(config.reader_font, "serif");
+        assert_eq!(config.reader_zoom, 100);
+        assert_eq!(config.reader_colors, "native");
+        assert_eq!(config.comic_zoom, 100);
+        assert_eq!(config.comic_layout, "single");
     }
 }

@@ -27,10 +27,11 @@ pub fn list_comic_image_names(path: &Path) -> AppResult<Vec<String>> {
 pub fn comic_page_data_url(path: &Path, index: usize) -> AppResult<(String, String, usize)> {
     let names = list_comic_image_names(path)?;
     let page_count = names.len();
-    let name = names
-        .get(index)
-        .cloned()
-        .ok_or_else(|| err(format!("Comic page {index} is out of range ({page_count} pages).")))?;
+    let name = names.get(index).cloned().ok_or_else(|| {
+        err(format!(
+            "Comic page {index} is out of range ({page_count} pages)."
+        ))
+    })?;
     let bytes = read_named_entry(path, &name)?;
     let (_, mime) = cover_file_info(&bytes);
     let mime = mime_for_name(&name).unwrap_or(mime);
@@ -237,11 +238,7 @@ mod tests {
 
     #[test]
     fn natural_sort_orders_page_numbers() {
-        let mut names = vec![
-            "page10.jpg".into(),
-            "page2.jpg".into(),
-            "page1.jpg".into(),
-        ];
+        let mut names = vec!["page10.jpg".into(), "page2.jpg".into(), "page1.jpg".into()];
         sort_comic_names(&mut names);
         assert_eq!(names, vec!["page1.jpg", "page2.jpg", "page10.jpg"]);
     }
@@ -275,11 +272,14 @@ mod tests {
             let mut zip = ZipWriter::new(file);
             let opts = SimpleFileOptions::default();
             zip.start_file("page2.png", opts).unwrap();
-            zip.write_all(&[0x89, b'P', b'N', b'G', 0, 0, 0, 0]).unwrap();
+            zip.write_all(&[0x89, b'P', b'N', b'G', 0, 0, 0, 0])
+                .unwrap();
             zip.start_file("page10.png", opts).unwrap();
-            zip.write_all(&[0x89, b'P', b'N', b'G', 0, 0, 0, 0]).unwrap();
+            zip.write_all(&[0x89, b'P', b'N', b'G', 0, 0, 0, 0])
+                .unwrap();
             zip.start_file("page1.png", opts).unwrap();
-            zip.write_all(&[0x89, b'P', b'N', b'G', 0, 0, 0, 0]).unwrap();
+            zip.write_all(&[0x89, b'P', b'N', b'G', 0, 0, 0, 0])
+                .unwrap();
             zip.start_file("__MACOSX/._junk", opts).unwrap();
             zip.write_all(b"skip").unwrap();
             zip.finish().unwrap();

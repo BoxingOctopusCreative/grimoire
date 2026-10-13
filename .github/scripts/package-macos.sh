@@ -26,8 +26,12 @@ fi
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/grimoire-app.XXXXXX")"
 KEYCHAIN_PATH=""
 PREVIOUS_KEYCHAINS=""
+MOUNTED=""
 
 cleanup() {
+  if [[ -n "${MOUNTED}" ]]; then
+    hdiutil detach "${MOUNTED}" >/dev/null 2>&1 || hdiutil detach -force "${MOUNTED}" >/dev/null 2>&1 || true
+  fi
   if [[ -n "${KEYCHAIN_PATH}" ]]; then
     security delete-keychain "${KEYCHAIN_PATH}" >/dev/null 2>&1 || true
   fi
@@ -115,20 +119,124 @@ if [[ -n "${IDENTITY}" ]]; then
   codesign --force --options runtime --timestamp --sign "${IDENTITY}" "${APP}"
 fi
 
+# Window matches the background image. Icon positions are centers:
+# Grimoire.app on the left, Applications on the right.
+DMG_WIDTH=680
+DMG_HEIGHT=480
+DMG_ICON_SIZE=128
+DMG_APP_X=180
+DMG_APP_Y=330
+DMG_APPLICATIONS_X=500
+DMG_APPLICATIONS_Y=330
+
+write_styled_dmg() {
+  local root="$1"
+  local dest="$2"
+  local rw="${STAGE}/grimoire-rw.dmg"
+  local logo_dir="${STAGE}/logo"
+  local logo="${logo_dir}/grimoire_logo-wide-dark.svg.png"
+  local volname
+
+  mkdir -p "${logo_dir}"
+  # Quick Look renders the wide SVG. The background script crops the square padding.
+  qlmanage -t -s 3200 -o "${logo_dir}" "${ROOT}/static/grimoire_logo-wide-dark.svg" >/dev/null
+  if [[ ! -f "${logo}" ]]; then
+    echo "Could not render static/grimoire_logo-wide-dark.svg" >&2
+    exit 1
+  fi
+
+  hdiutil create -size 240m -fs HFS+ -volname Grimoire -ov "${rw}" >/dev/null
+  # An open Grimoire disk takes /Volumes/Grimoire. The new image would then
+  # mount at "/Volumes/Grimoire 1", and Finder would style the wrong disk.
+  if [[ -d /Volumes/Grimoire ]]; then
+    echo "Ejecting the open Grimoire disk so the new image can use that name."
+    hdiutil detach "/Volumes/Grimoire" >/dev/null 2>&1 \
+      || hdiutil detach -force "/Volumes/Grimoire" >/dev/null 2>&1 \
+      || true
+  fi
+  # Mount under /Volumes so Finder sees the volume name. A private mountpoint
+  # shows up under the folder name instead, and the window styling cannot find it.
+  local attach_plist="${STAGE}/attach.plist"
+  hdiutil attach "${rw}" -noverify -noautoopen -plist > "${attach_plist}"
+  MOUNTED="$(python3 -c '
+import plistlib, sys
+info = plistlib.load(open(sys.argv[1], "rb"))
+for entity in info.get("system-entities", []):
+    point = entity.get("mount-point")
+    if point:
+        print(point)
+        raise SystemExit
+raise SystemExit("mounted image has no mount point")
+' "${attach_plist}")"
+  if [[ "${MOUNTED}" != "/Volumes/Grimoire" ]]; then
+    echo "The disk image mounted at ${MOUNTED} instead of /Volumes/Grimoire." >&2
+    echo "Eject every open Grimoire disk, then package again." >&2
+    exit 1
+  fi
+  volname="Grimoire"
+  cp -R "${root}/." "${MOUNTED}/"
+  mkdir -p "${MOUNTED}/.background"
+  swift "${ROOT}/.github/scripts/dmg-background.swift" \
+    "${logo}" \
+    "${MOUNTED}/.background/background.png" \
+    "${MOUNTED}/.background/background@2x.png" \
+    "${DMG_WIDTH}" \
+    "${DMG_HEIGHT}" \
+    "${DMG_APP_X}" \
+    "${DMG_APPLICATIONS_X}"
+
+  osascript <<EOF
+tell application "Finder"
+  tell disk "${volname}"
+    open
+    delay 1
+    set current view of container window to icon view
+    set toolbar visible of container window to false
+    set statusbar visible of container window to false
+    set the bounds of container window to {200, 120, 200 + ${DMG_WIDTH}, 120 + ${DMG_HEIGHT}}
+    set viewOptions to the icon view options of container window
+    set arrangement of viewOptions to not arranged
+    set icon size of viewOptions to ${DMG_ICON_SIZE}
+    set text size of viewOptions to 13
+    set background picture of viewOptions to file ".background:background.png"
+    delay 1
+    set position of item "Grimoire.app" of container window to {${DMG_APP_X}, ${DMG_APP_Y}}
+    set position of item "Applications" of container window to {${DMG_APPLICATIONS_X}, ${DMG_APPLICATIONS_Y}}
+    close
+    open
+    delay 1
+    set current view of container window to icon view
+    set toolbar visible of container window to false
+    set statusbar visible of container window to false
+    set the bounds of container window to {200, 120, 200 + ${DMG_WIDTH}, 120 + ${DMG_HEIGHT}}
+    set viewOptions to the icon view options of container window
+    set arrangement of viewOptions to not arranged
+    set icon size of viewOptions to ${DMG_ICON_SIZE}
+    set background picture of viewOptions to file ".background:background.png"
+    set position of item "Grimoire.app" of container window to {${DMG_APP_X}, ${DMG_APP_Y}}
+    set position of item "Applications" of container window to {${DMG_APPLICATIONS_X}, ${DMG_APPLICATIONS_Y}}
+    update without registering applications
+    delay 2
+    close
+  end tell
+end tell
+EOF
+
+  sync
+  hdiutil detach "${MOUNTED}" >/dev/null
+  MOUNTED=""
+  hdiutil convert "${rw}" -format UDZO -imagekey zlib-level=9 -o "${dest}" >/dev/null
+}
+
 DMG_ROOT="${STAGE}/dmg"
 mkdir -p "${DMG_ROOT}"
 cp -R "${APP}" "${DMG_ROOT}/"
 ln -s /Applications "${DMG_ROOT}/Applications"
-if [[ -z "${IDENTITY}" ]]; then
-  cp "${ROOT}/app/macos/Install Grimoire.command" "${DMG_ROOT}/Install Grimoire.command"
-  chmod +x "${DMG_ROOT}/Install Grimoire.command"
-  cp "${ROOT}/app/macos/How to install.txt" "${DMG_ROOT}/How to install.txt"
-fi
 
 mkdir -p "${OUT}"
 DMG="${OUT}/Grimoire_${VERSION}_${ARCH}.dmg"
 rm -f "${DMG}"
-hdiutil create -volname Grimoire -srcfolder "${DMG_ROOT}" -ov -format UDZO "${DMG}" >/dev/null
+write_styled_dmg "${DMG_ROOT}" "${DMG}"
 
 if [[ -n "${IDENTITY}" ]]; then
   codesign --force --timestamp --sign "${IDENTITY}" "${DMG}"
