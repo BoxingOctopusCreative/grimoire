@@ -1,7 +1,7 @@
 use crate::db::{open_database, refresh_fts, remove_fts};
 use crate::error::{err, AppResult};
-use crate::openlibrary::MetadataMatch;
 use crate::metadata::{cover_file_info, extract_from_file};
+use crate::openlibrary::MetadataMatch;
 use crate::state::LibrarySession;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -126,7 +126,8 @@ pub fn import_book(conn: &mut Connection, root: &Path, source: &Path) -> AppResu
         extracted.authors.clone()
     };
 
-    let author_folder = sanitize_component(authors.first().map(|s| s.as_str()).unwrap_or("Unknown"));
+    let author_folder =
+        sanitize_component(authors.first().map(|s| s.as_str()).unwrap_or("Unknown"));
     let title_folder = sanitize_component(&title);
     let rel_dir = PathBuf::from(&author_folder).join(&title_folder);
     let abs_dir = root.join(&rel_dir);
@@ -158,7 +159,14 @@ pub fn import_book(conn: &mut Connection, root: &Path, source: &Path) -> AppResu
     tx.execute(
         "INSERT INTO books (uuid, title, sort_title, path, has_cover, timestamp)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![uuid, title, title.to_lowercase(), path_str, has_cover as i64, timestamp],
+        params![
+            uuid,
+            title,
+            title.to_lowercase(),
+            path_str,
+            has_cover as i64,
+            timestamp
+        ],
     )?;
     let book_id = tx.last_insert_rowid();
 
@@ -191,11 +199,7 @@ pub fn import_book(conn: &mut Connection, root: &Path, source: &Path) -> AppResu
         let series_id = upsert_series(&tx, series_name)?;
         tx.execute(
             "INSERT INTO books_series (book, series, series_index) VALUES (?1, ?2, ?3)",
-            params![
-                book_id,
-                series_id,
-                extracted.series_index.unwrap_or(1.0)
-            ],
+            params![book_id, series_id, extracted.series_index.unwrap_or(1.0)],
         )?;
     }
 
@@ -233,9 +237,8 @@ pub fn list_books(conn: &Connection, query: Option<&str>) -> AppResult<Vec<BookS
 
     if let Some(q) = query.map(str::trim).filter(|s| !s.is_empty()) {
         let fts_query = format!("{}*", q.replace('"', ""));
-        let mut stmt = conn.prepare(
-            "SELECT rowid FROM books_fts WHERE books_fts MATCH ?1 ORDER BY rank",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT rowid FROM books_fts WHERE books_fts MATCH ?1 ORDER BY rank")?;
         let rows = stmt.query_map([fts_query], |row| row.get(0));
         match rows {
             Ok(mapped) => {
@@ -282,11 +285,9 @@ pub fn get_book(conn: &Connection, _root: &Path, id: i64) -> AppResult<BookDetai
     let formats = book_formats(conn, id)?;
     let (series, series_index) = book_series(conn, id)?;
     let comment: String = conn
-        .query_row(
-            "SELECT text FROM comments WHERE book = ?1",
-            [id],
-            |row| row.get(0),
-        )
+        .query_row("SELECT text FROM comments WHERE book = ?1", [id], |row| {
+            row.get(0)
+        })
         .optional()?
         .unwrap_or_default();
 
@@ -323,11 +324,7 @@ pub fn update_book(
     update: BookUpdate,
 ) -> AppResult<BookDetail> {
     let exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM books WHERE id = ?1",
-            [id],
-            |_| Ok(true),
-        )
+        .query_row("SELECT 1 FROM books WHERE id = ?1", [id], |_| Ok(true))
         .optional()?
         .unwrap_or(false);
     if !exists {
@@ -443,8 +440,8 @@ pub(crate) fn apply_remote_match(
         .identifiers
         .iter()
         .any(|i| i.type_name.eq_ignore_ascii_case("isbn"));
-    let title_generic = current.title.trim().is_empty()
-        || current.title.eq_ignore_ascii_case("untitled");
+    let title_generic =
+        current.title.trim().is_empty() || current.title.eq_ignore_ascii_case("untitled");
 
     let mut next_title = current.title.clone();
     if title_generic {
@@ -497,11 +494,10 @@ pub(crate) fn apply_remote_match(
         }
     }
 
-    let book_path: String = conn.query_row(
-        "SELECT path FROM books WHERE id = ?1",
-        [id],
-        |row| row.get(0),
-    )?;
+    let book_path: String =
+        conn.query_row("SELECT path FROM books WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })?;
 
     if let Some(bytes) = cover_bytes {
         write_cover_bytes(conn, root, id, &book_path, bytes)?;
@@ -546,11 +542,10 @@ pub fn set_book_cover(
     id: i64,
     bytes: &[u8],
 ) -> AppResult<BookDetail> {
-    let book_path: String = conn.query_row(
-        "SELECT path FROM books WHERE id = ?1",
-        [id],
-        |row| row.get(0),
-    )?;
+    let book_path: String =
+        conn.query_row("SELECT path FROM books WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })?;
     write_cover_bytes(conn, root, id, &book_path, bytes)?;
     get_book(conn, root, id)
 }
@@ -564,7 +559,13 @@ fn write_cover_bytes(
 ) -> AppResult<()> {
     let abs_dir = root.join(book_path);
     let (filename, _) = cover_file_info(bytes);
-    for name in ["cover.jpg", "cover.jpeg", "cover.png", "cover.webp", "cover.gif"] {
+    for name in [
+        "cover.jpg",
+        "cover.jpeg",
+        "cover.png",
+        "cover.webp",
+        "cover.gif",
+    ] {
         let path = abs_dir.join(name);
         if path.exists() {
             let _ = fs::remove_file(path);
@@ -577,11 +578,9 @@ fn write_cover_bytes(
 }
 
 pub fn delete_book(conn: &mut Connection, root: &Path, id: i64) -> AppResult<()> {
-    let path: String = conn.query_row(
-        "SELECT path FROM books WHERE id = ?1",
-        [id],
-        |row| row.get(0),
-    )?;
+    let path: String = conn.query_row("SELECT path FROM books WHERE id = ?1", [id], |row| {
+        row.get(0)
+    })?;
     let abs = root.join(&path);
     // contentless FTS5 cannot DELETE; clear the index row first.
     remove_fts(conn, id)?;
@@ -620,7 +619,11 @@ pub struct BulkActionResult {
     pub failed: Vec<BulkFailure>,
 }
 
-pub fn delete_ebooks(conn: &mut Connection, root: &Path, ids: &[i64]) -> AppResult<BulkActionResult> {
+pub fn delete_ebooks(
+    conn: &mut Connection,
+    root: &Path,
+    ids: &[i64],
+) -> AppResult<BulkActionResult> {
     let mut updated = 0i64;
     let mut failed = Vec::new();
     for &id in ids {
@@ -670,10 +673,8 @@ fn patch_one_book(conn: &mut Connection, id: i64, patch: &BookBulkPatch) -> AppR
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty())
         .collect();
-    let touching_anything = !add_tags.is_empty()
-        || patch.set_series
-        || patch.set_series_index
-        || patch.set_comment;
+    let touching_anything =
+        !add_tags.is_empty() || patch.set_series || patch.set_series_index || patch.set_comment;
     if !touching_anything {
         return Ok(());
     }
@@ -682,10 +683,7 @@ fn patch_one_book(conn: &mut Connection, id: i64, patch: &BookBulkPatch) -> AppR
 
     if !add_tags.is_empty() {
         let existing = book_tags(&tx, id)?;
-        let mut seen: Vec<String> = existing
-            .iter()
-            .map(|t| t.to_ascii_lowercase())
-            .collect();
+        let mut seen: Vec<String> = existing.iter().map(|t| t.to_ascii_lowercase()).collect();
         for tag in &add_tags {
             let key = tag.to_ascii_lowercase();
             if seen.iter().any(|s| s == &key) {
@@ -767,7 +765,12 @@ pub fn cover_path(conn: &Connection, root: &Path, id: i64) -> AppResult<Option<P
     Ok(None)
 }
 
-pub fn format_file_path(conn: &Connection, root: &Path, book_id: i64, format: &str) -> AppResult<PathBuf> {
+pub fn format_file_path(
+    conn: &Connection,
+    root: &Path,
+    book_id: i64,
+    format: &str,
+) -> AppResult<PathBuf> {
     let (path, filename): (String, String) = conn.query_row(
         "SELECT b.path, f.filename FROM books b
          JOIN formats f ON f.book = b.id
@@ -865,29 +868,29 @@ fn upsert_author(conn: &Connection, name: &str) -> AppResult<i64> {
         "INSERT OR IGNORE INTO authors (name, sort) VALUES (?1, ?2)",
         params![name, name.to_lowercase()],
     )?;
-    Ok(conn.query_row(
-        "SELECT id FROM authors WHERE name = ?1",
-        [name],
-        |row| row.get(0),
-    )?)
+    Ok(
+        conn.query_row("SELECT id FROM authors WHERE name = ?1", [name], |row| {
+            row.get(0)
+        })?,
+    )
 }
 
 fn upsert_tag(conn: &Connection, name: &str) -> AppResult<i64> {
     conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?1)", [name])?;
-    Ok(conn.query_row(
-        "SELECT id FROM tags WHERE name = ?1",
-        [name],
-        |row| row.get(0),
-    )?)
+    Ok(
+        conn.query_row("SELECT id FROM tags WHERE name = ?1", [name], |row| {
+            row.get(0)
+        })?,
+    )
 }
 
 fn upsert_series(conn: &Connection, name: &str) -> AppResult<i64> {
     conn.execute("INSERT OR IGNORE INTO series (name) VALUES (?1)", [name])?;
-    Ok(conn.query_row(
-        "SELECT id FROM series WHERE name = ?1",
-        [name],
-        |row| row.get(0),
-    )?)
+    Ok(
+        conn.query_row("SELECT id FROM series WHERE name = ?1", [name], |row| {
+            row.get(0)
+        })?,
+    )
 }
 
 fn format_from_ext(ext: &str) -> Option<&'static str> {

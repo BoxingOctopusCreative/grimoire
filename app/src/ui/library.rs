@@ -13,10 +13,12 @@ use gpui_kit::prelude::{
     StyledImage as _,
 };
 use gpui_kit::AppContext as _;
-use gpui_kit::{AnyElement, Context, IntoElement, ObjectFit, ParentElement as _, Window, div, img, px};
+use gpui_kit::{
+    div, img, px, AnyElement, Context, IntoElement, ObjectFit, ParentElement as _, Window,
+};
 
 use super::backend::{self, LibraryStatus};
-use super::shell::{FormatKind, ReadingStatus, Route, Shell};
+use super::shell::{FormatKind, ImportProgress, ReadingStatus, Route, Shell};
 use super::theme::DISPLAY;
 use crate::library::{BookBulkPatch, BookSummary};
 
@@ -406,7 +408,11 @@ impl Shell {
                     .label("Select all")
                     .disabled(self.busy)
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.selected = this.filtered_books().into_iter().map(|book| book.id).collect();
+                        this.selected = this
+                            .filtered_books()
+                            .into_iter()
+                            .map(|book| book.id)
+                            .collect();
                         cx.notify();
                     })),
             )
@@ -448,7 +454,9 @@ impl Shell {
                     .danger()
                     .label("Delete")
                     .disabled(self.busy)
-                    .on_click(cx.listener(|this, _, window, cx| this.confirm_bulk_delete(window, cx))),
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.confirm_bulk_delete(window, cx)),
+                    ),
             )
     }
 
@@ -493,23 +501,31 @@ impl Shell {
                         cx.notify();
                     })),
             )
-            .child(gpui_kit::component::input::Textarea::new(&self.bulk_notes_input))
+            .child(gpui_kit::component::input::Textarea::new(
+                &self.bulk_notes_input,
+            ))
             .child(
-                div().flex().gap(px(8.)).child(
-                    Button::new("bulk-cancel")
-                        .outline()
-                        .label("Cancel")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.bulk_open = false;
-                            cx.notify();
-                        })),
-                ).child(
-                    Button::new("bulk-apply")
-                        .primary()
-                        .label("Apply")
-                        .disabled(self.busy)
-                        .on_click(cx.listener(|this, _, window, cx| this.apply_bulk(window, cx))),
-                ),
+                div()
+                    .flex()
+                    .gap(px(8.))
+                    .child(
+                        Button::new("bulk-cancel")
+                            .outline()
+                            .label("Cancel")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.bulk_open = false;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("bulk-apply")
+                            .primary()
+                            .label("Apply")
+                            .disabled(self.busy)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.apply_bulk(window, cx)),
+                            ),
+                    ),
             )
     }
 
@@ -537,8 +553,9 @@ impl Shell {
             cx,
             move || {
                 let query = query.trim();
-                let books = backend::list(&state, if query.is_empty() { None } else { Some(query) })
-                    .map_err(|e| e.to_string())?;
+                let books =
+                    backend::list(&state, if query.is_empty() { None } else { Some(query) })
+                        .map_err(|e| e.to_string())?;
                 let covers = backend::covers_for(&state, &books);
                 Ok((books, covers))
             },
@@ -567,7 +584,8 @@ impl Shell {
             Ok(status) => {
                 self.apply_status(status);
                 self.error.clear();
-                self.message = "Library path saved. Grimoire will open it on the next launch too.".into();
+                self.message =
+                    "Library path saved. Grimoire will open it on the next launch too.".into();
                 self.reload_books(window, cx);
             }
             Err(error) => self.error = error.to_string(),
@@ -586,67 +604,124 @@ impl Shell {
         self.import_paths(paths, window, cx);
     }
 
-    pub fn import_paths(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
-        let ebook_paths: Vec<_> = paths
-            .into_iter()
-            .filter(|path| backend::SUPPORTED_EXT.contains(&backend::extension_of(path).as_str()))
-            .collect();
-        if ebook_paths.is_empty() {
-            self.error = "No supported eBooks in that drop. Use EPUB, PDF, AZW3, MOBI, TXT, CBZ, or CBR.".into();
-            cx.notify();
-            return;
-        }
-        if !self.library_open {
-            self.error = "Open a library folder before importing books.".into();
-            cx.notify();
+    pub fn import_paths(
+        &mut self,
+        paths: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.busy {
             return;
         }
         self.busy = true;
         self.error.clear();
         self.message.clear();
+        self.import_progress = Some(ImportProgress {
+            done: 0,
+            total: 0,
+            name: "Scanning for books…".into(),
+        });
+        let library_open = self.library_open;
         let state = self.state.clone();
-        self.spawn_task(
-            window,
-            cx,
-            async move {
-                let mut imported = 0;
-                let mut failures = Vec::new();
-                for path in ebook_paths {
-                    match backend::import(&state, &path) {
-                        Ok(book) => {
-                            imported += 1;
-                            if needs_enrichment(&book) {
-                                let _ = backend::enrich(&state, book.id).await;
+        let runtime = self.runtime(cx);
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let scanned = runtime
+                .spawn_blocking(move || backend::collect_ebook_paths(&paths))
+                .await;
+            let ebook_paths = match scanned {
+                Ok(paths) => paths,
+                Err(error) => {
+                    this.update_in(cx, |this, _, cx| {
+                        this.busy = false;
+                        this.import_progress = None;
+                        this.error = error.to_string();
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+            };
+            if ebook_paths.is_empty() {
+                this.update_in(cx, |this, _, cx| {
+                    this.busy = false;
+                    this.import_progress = None;
+                    this.error = "No supported eBooks in that drop. Use EPUB, PDF, AZW3, MOBI, TXT, CBZ, or CBR.".into();
+                    cx.notify();
+                })
+                .ok();
+                return;
+            }
+            if !library_open {
+                this.update_in(cx, |this, _, cx| {
+                    this.busy = false;
+                    this.import_progress = None;
+                    this.error = "Open a library folder before importing books.".into();
+                    cx.notify();
+                })
+                .ok();
+                return;
+            }
+
+            let total = ebook_paths.len();
+            let mut imported = 0usize;
+            let mut failures = Vec::new();
+            for (index, path) in ebook_paths.into_iter().enumerate() {
+                let name = path
+                    .file_name()
+                    .and_then(|file_name| file_name.to_str())
+                    .unwrap_or("book")
+                    .to_string();
+                this.update(cx, |this, cx| {
+                    this.import_progress = Some(ImportProgress {
+                        done: index,
+                        total,
+                        name: name.clone(),
+                    });
+                    cx.notify();
+                })
+                .ok();
+
+                let state = state.clone();
+                let outcome = runtime
+                    .spawn(async move {
+                        match backend::import(&state, &path) {
+                            Ok(book) => {
+                                if needs_enrichment(&book) {
+                                    let _ = backend::enrich(&state, book.id).await;
+                                }
+                                Ok(())
                             }
+                            Err(error) => Err(error.to_string()),
                         }
-                        Err(error) => {
-                            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("book");
-                            failures.push(format!("{name}: {error}"));
-                        }
-                    }
+                    })
+                    .await;
+                match outcome {
+                    Ok(Ok(())) => imported += 1,
+                    Ok(Err(error)) => failures.push(format!("{name}: {error}")),
+                    Err(error) => failures.push(format!("{name}: {error}")),
                 }
-                Ok((imported, failures))
-            },
-            |this, result, window, cx| {
+            }
+
+            this.update_in(cx, |this, window, cx| {
                 this.busy = false;
-                match result {
-                    Ok((imported, failures)) => {
-                        if imported > 0 {
-                            this.message = if imported == 1 {
-                                "Imported 1 book.".into()
-                            } else {
-                                format!("Imported {imported} books.")
-                            };
-                        }
-                        if !failures.is_empty() {
-                            this.error = failures.into_iter().take(3).collect::<Vec<_>>().join(" · ");
-                        }
-                    }
-                    Err(error) => this.error = error,
+                this.import_progress = None;
+                if imported > 0 {
+                    this.message = if imported == 1 {
+                        "Imported 1 book.".into()
+                    } else {
+                        format!("Imported {imported} books.")
+                    };
                 }
+                if !failures.is_empty() {
+                    this.error = failures.into_iter().take(3).collect::<Vec<_>>().join(" · ");
+                }
+                cx.notify();
                 this.reload_books(window, cx);
-            },
-        );
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn apply_bulk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -672,7 +747,11 @@ impl Shell {
             set_series: self.bulk_series,
             series: if self.bulk_series {
                 let series = series.trim().to_string();
-                if series.is_empty() { None } else { Some(series) }
+                if series.is_empty() {
+                    None
+                } else {
+                    Some(series)
+                }
             } else {
                 None
             },
@@ -737,8 +816,14 @@ impl Shell {
     }
 
     fn bulk_send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(device) = self.devices.iter().find(|device| device.supports_send).cloned() else {
-            self.error = "No Kindle connected. Connect over MTP / USB file transfer, then try again.".into();
+        let Some(device) = self
+            .devices
+            .iter()
+            .find(|device| device.supports_send)
+            .cloned()
+        else {
+            self.error =
+                "No Kindle connected. Connect over MTP / USB file transfer, then try again.".into();
             cx.notify();
             return;
         };
@@ -778,12 +863,9 @@ impl Shell {
                 .on_ok({
                     let shell = shell.clone();
                     move |_, window, cx| {
-                    shell
-                        .downgrade().update_in(cx, |this, window, cx| this.bulk_delete(window, cx))
-                        .ok();
-                    let _ = window;
-                    true
-                }
+                        shell.update(cx, |this, cx| this.bulk_delete(window, cx));
+                        true
+                    }
                 })
         });
     }
@@ -815,7 +897,12 @@ impl Shell {
         self.load_book(id, window, cx);
     }
 
-    pub fn open_reader_for(&mut self, book: &BookSummary, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn open_reader_for(
+        &mut self,
+        book: &BookSummary,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if backend::can_read(&book.formats) {
             self.open_reader(book.id, cx);
             return;
@@ -835,9 +922,14 @@ impl Shell {
 
     pub fn open_reader(&mut self, id: i64, cx: &mut Context<Self>) {
         let state = self.state.clone();
-        let _ = gpui_kit::open_window(super::reader_window_options("Grimoire", cx), cx, |window, cx| {
-            cx.new(|cx| super::reader::ReaderWindow::new(state, id, window, cx))
-        });
+        let Ok((handle, _)) = gpui_kit::open_window(
+            super::reader_window_options("Grimoire", cx),
+            cx,
+            |window, cx| cx.new(|cx| super::reader::ReaderWindow::new(state, id, window, cx)),
+        ) else {
+            return;
+        };
+        let _ = handle.update(cx, |_, window, _| window.activate_window());
     }
 }
 
@@ -849,7 +941,10 @@ fn book_matches(book: &BookSummary, shell: &Shell) -> bool {
         return false;
     }
     if !shell.filter_genres.is_empty()
-        && !book.tags.iter().any(|tag| shell.filter_genres.contains(tag.trim()))
+        && !book
+            .tags
+            .iter()
+            .any(|tag| shell.filter_genres.contains(tag.trim()))
     {
         return false;
     }
@@ -974,8 +1069,18 @@ fn empty_panel(title: &str, body: &str, cx: &gpui_kit::App) -> impl IntoElement 
         .bg(cx.theme().popover)
         .border_1()
         .border_color(cx.theme().border)
-        .child(div().font_family(DISPLAY).text_size(px(22.)).child(title.to_string()))
-        .child(div().mt(px(6.)).text_color(cx.theme().muted_foreground).child(body.to_string()))
+        .child(
+            div()
+                .font_family(DISPLAY)
+                .text_size(px(22.))
+                .child(title.to_string()),
+        )
+        .child(
+            div()
+                .mt(px(6.))
+                .text_color(cx.theme().muted_foreground)
+                .child(body.to_string()),
+        )
 }
 
 fn book_section(
@@ -996,9 +1101,20 @@ fn book_section(
         .gap(px(10.))
         .child(super::shell::section_title(title, Some(books.len())))
         .child(
-            div().flex().flex_wrap().gap(px(16.)).children(books.iter().map(|book| {
-                book_card(book, covers.get(&book.id), select_mode, selected.contains(&book.id), shell.clone(), cx)
-            })),
+            div()
+                .flex()
+                .flex_wrap()
+                .gap(px(16.))
+                .children(books.iter().map(|book| {
+                    book_card(
+                        book,
+                        covers.get(&book.id),
+                        select_mode,
+                        selected.contains(&book.id),
+                        shell.clone(),
+                        cx,
+                    )
+                })),
         )
 }
 
@@ -1013,10 +1129,8 @@ fn book_card(
     let id = book.id;
     let title = book.title.clone();
     let authors = author_labels(book).join(", ");
-    let can_read = backend::can_read(&book.formats);
     let progress = book.progress_percent.filter(|percent| *percent < 100.0);
     let menu_shell = shell.clone();
-    let open_shell = shell.clone();
     let card_title = title.clone();
     let menu_title = title.clone();
 
@@ -1025,25 +1139,23 @@ fn book_card(
         .w(px(148.))
         .cursor_pointer()
         .when(is_selected, |this| {
-            this.border_1().border_color(cx.theme().primary).rounded(px(8.)).p(px(4.))
+            this.border_1()
+                .border_color(cx.theme().primary)
+                .rounded(px(8.))
+                .p(px(4.))
         })
-        .on_click(move |_, window, cx| {
-            open_shell
-                .downgrade().update_in(cx, |this, window, cx| {
-                    if this.select_mode {
-                        if this.selected.contains(&id) {
-                            this.selected.remove(&id);
-                        } else {
-                            this.selected.insert(id);
-                        }
-                        cx.notify();
-                    } else if let Some(book) = this.books.iter().find(|book| book.id == id).cloned() {
-                        this.open_reader_for(&book, window, cx);
-                    }
-                })
-                .ok();
-            let _ = window;
-        })
+        .on_click(cx.listener(move |this, _, window, cx| {
+            if this.select_mode {
+                if this.selected.contains(&id) {
+                    this.selected.remove(&id);
+                } else {
+                    this.selected.insert(id);
+                }
+                cx.notify();
+            } else if let Some(book) = this.books.iter().find(|book| book.id == id).cloned() {
+                this.open_reader_for(&book, window, cx);
+            }
+        }))
         .context_menu(move |menu, _, _| {
             let info = menu_shell.clone();
             let read = menu_shell.clone();
@@ -1053,55 +1165,56 @@ fn book_card(
             let title_for_delete = card_title.clone();
             let send_title = menu_title.clone();
             menu.item(
-                PopupMenuItem::new("Info").on_click(move |_, _, cx| {
-                    info.downgrade().update_in(cx, |this, window, cx| this.show_book(id, window, cx)).ok();
-                }),
-            )
-            .when(can_read, |menu| {
-                menu.item(PopupMenuItem::new("Read").on_click(move |_, _, cx| {
-                    read.update(cx, |this, cx| this.open_reader(id, cx));
-                }))
-            })
-            .item(PopupMenuItem::new("Edit metadata").on_click({
-                let info = menu_shell.clone();
-                move |_, _, cx| {
-                    info.downgrade().update_in(cx, |this, window, cx| this.show_book(id, window, cx)).ok();
-                }
-            }))
-            .item(PopupMenuItem::new("Fetch metadata").on_click(move |_, _, cx| {
-                fetch
-                    .downgrade().update_in(cx, |this, window, cx| this.fetch_one(id, window, cx))
-                    .ok();
-            }))
-            .item(PopupMenuItem::new("Send to device").on_click({
-                let send_title = send_title.clone();
-                move |_, _, cx| {
-                send.downgrade().update_in(cx, |this, window, cx| this.send_one(id, &send_title, window, cx))
-                    .ok();
-            }
-            }))
-            .separator()
-            .item(
-                PopupMenuItem::new("Delete").on_click(move |_, window, cx| {
-                    let delete = delete.clone();
-                    let title = title_for_delete.clone();
-                    window.open_alert_dialog(cx, move |alert, _, _| {
-                        alert
-                            .confirm()
-                            .title("Delete book")
-                            .description(format!("Delete \"{title}\" from the library?"))
-                            .on_ok({
-                                let delete = delete.clone();
-                                move |_, _, cx| {
-                                delete
-                                    .downgrade().update_in(cx, |this, window, cx| this.delete_one(id, window, cx))
-                                    .ok();
-                                true
-                            }
-                            })
+                PopupMenuItem::element(|_, _| {
+                    div().font_weight(gpui_kit::FontWeight::BOLD).child("Read")
+                })
+                .on_click(move |_, window, cx| {
+                    read.update(cx, |this, cx| {
+                        if let Some(book) = this.books.iter().find(|book| book.id == id).cloned() {
+                            this.open_reader_for(&book, window, cx);
+                        }
                     });
                 }),
             )
+            .separator()
+            .item(PopupMenuItem::new("Info").on_click(move |_, window, cx| {
+                info.update(cx, |this, cx| this.show_book(id, window, cx));
+            }))
+            .item(PopupMenuItem::new("Edit metadata").on_click({
+                let info = menu_shell.clone();
+                move |_, window, cx| {
+                    info.update(cx, |this, cx| this.show_book(id, window, cx));
+                }
+            }))
+            .item(
+                PopupMenuItem::new("Fetch metadata").on_click(move |_, window, cx| {
+                    fetch.update(cx, |this, cx| this.fetch_one(id, window, cx));
+                }),
+            )
+            .item(PopupMenuItem::new("Send to device").on_click({
+                let send_title = send_title.clone();
+                move |_, window, cx| {
+                    send.update(cx, |this, cx| this.send_one(id, &send_title, window, cx));
+                }
+            }))
+            .separator()
+            .item(PopupMenuItem::new("Delete").on_click(move |_, window, cx| {
+                let delete = delete.clone();
+                let title = title_for_delete.clone();
+                window.open_alert_dialog(cx, move |alert, _, _| {
+                    alert
+                        .confirm()
+                        .title("Delete book")
+                        .description(format!("Delete \"{title}\" from the library?"))
+                        .on_ok({
+                            let delete = delete.clone();
+                            move |_, window, cx| {
+                                delete.update(cx, |this, cx| this.delete_one(id, window, cx));
+                                true
+                            }
+                        })
+                });
+            }))
         })
         .child(cover_box(cover, &title, progress, cx))
         .child(
@@ -1138,7 +1251,10 @@ fn cover_box(
         .overflow_hidden()
         .bg(cx.theme().muted)
         .child(match cover {
-            Some(path) => img(path.clone()).size_full().object_fit(ObjectFit::Cover).into_any_element(),
+            Some(path) => img(path.clone())
+                .size_full()
+                .object_fit(ObjectFit::Cover)
+                .into_any_element(),
             None => div()
                 .size_full()
                 .flex()
@@ -1194,8 +1310,14 @@ impl Shell {
     }
 
     fn send_one(&mut self, id: i64, title: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(device) = self.devices.iter().find(|device| device.supports_send).cloned() else {
-            self.error = "No Kindle connected. Connect over MTP / USB file transfer, then try again.".into();
+        let Some(device) = self
+            .devices
+            .iter()
+            .find(|device| device.supports_send)
+            .cloned()
+        else {
+            self.error =
+                "No Kindle connected. Connect over MTP / USB file transfer, then try again.".into();
             cx.notify();
             return;
         };
@@ -1205,7 +1327,12 @@ impl Shell {
         self.spawn_task(
             window,
             cx,
-            async move { backend::send(&state, id, &device.id).await.map(|result| (result, device.product)).map_err(|e| e.to_string()) },
+            async move {
+                backend::send(&state, id, &device.id)
+                    .await
+                    .map(|result| (result, device.product))
+                    .map_err(|e| e.to_string())
+            },
             move |this, result, _, cx| {
                 this.busy = false;
                 match result {

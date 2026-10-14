@@ -3,9 +3,10 @@ use gpui_kit::component::{ActiveTheme as _, Disableable as _, WindowExt as _};
 use gpui_kit::prelude::{
     FluentBuilder as _, InteractiveElement as _, StatefulInteractiveElement as _, Styled as _,
 };
-use gpui_kit::{Context, FontWeight, IntoElement, ParentElement as _, Window, div, px};
+use gpui_kit::{div, px, Context, FontWeight, IntoElement, ParentElement as _, Window};
 
 use super::backend;
+use super::reader::{self, TextColors};
 use super::shell::Shell;
 use super::theme::DISPLAY;
 
@@ -20,11 +21,7 @@ const FONTS: &[(&str, &str, &str)] = &[
         "Serif",
         "A reading serif, Iowan Old Style or Georgia.",
     ),
-    (
-        "sans",
-        "Sans",
-        "A clean sans for long stretches of text.",
-    ),
+    ("sans", "Sans", "A clean sans for long stretches of text."),
     (
         "opendyslexic",
         "OpenDyslexic",
@@ -33,7 +30,11 @@ const FONTS: &[(&str, &str, &str)] = &[
 ];
 
 impl Shell {
-    pub fn settings_page(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    pub fn settings_page(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let path = self
             .library_path
             .clone()
@@ -46,6 +47,10 @@ impl Shell {
             ""
         };
         let font = self.reader_font.clone();
+        let zoom = self.reader_zoom;
+        let colors = self.reader_colors.clone();
+        let comic_zoom = self.comic_zoom;
+        let comic_spread = self.comic_spread;
 
         div()
             .id("settings-page")
@@ -133,6 +138,150 @@ impl Shell {
                         .child("The quick brown fox jumps over the lazy dog."),
                 )
             })
+            .child(
+                settings_block(
+                    "Default text size",
+                    "New books open at this size. A- and A+ in the reader still change the book you have open, and that change is saved here.",
+                    cx,
+                )
+                .child(
+                    div()
+                        .mt(px(10.))
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(
+                            Button::new("settings-zoom-out")
+                                .outline()
+                                .label("A-")
+                                .disabled(zoom <= reader::ZOOM_MIN)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let next = reader::clamp_zoom(
+                                        this.reader_zoom.saturating_sub(reader::ZOOM_STEP),
+                                    );
+                                    this.reader_zoom = next;
+                                    let _ = backend::save_reader_zoom(next);
+                                    this.message = format!("Default text size set to {next}%.");
+                                    cx.notify();
+                                })),
+                        )
+                        .child(format!("{zoom}%"))
+                        .child(
+                            Button::new("settings-zoom-in")
+                                .outline()
+                                .label("A+")
+                                .disabled(zoom >= reader::ZOOM_MAX)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let next = reader::clamp_zoom(
+                                        this.reader_zoom.saturating_add(reader::ZOOM_STEP),
+                                    );
+                                    this.reader_zoom = next;
+                                    let _ = backend::save_reader_zoom(next);
+                                    this.message = format!("Default text size set to {next}%.");
+                                    cx.notify();
+                                })),
+                        ),
+                ),
+            )
+            .child({
+                let mut block = settings_block(
+                    "Default text colors",
+                    "New books open with this text area. Choosing a color in the reader saves it here too.",
+                    cx,
+                );
+                block = block.child(div().mt(px(10.)).flex().flex_wrap().gap(px(8.)).children(
+                    TextColors::CHOICES.iter().copied().map(|choice| {
+                        let selected = colors == choice.id();
+                        Button::new(format!("settings-colors-{}", choice.id()))
+                            .when(selected, |button| button.primary())
+                            .when(!selected, |button| button.outline())
+                            .label(choice.label())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.reader_colors = choice.id().to_string();
+                                let _ = backend::save_reader_colors(&this.reader_colors);
+                                this.message =
+                                    format!("Default text colors set to {}.", choice.label());
+                                cx.notify();
+                            }))
+                    }),
+                ));
+                block
+            })
+            .child(
+                settings_block(
+                    "Comic reader",
+                    "Comics open at this size and page layout. Zoom and the page toggle in the reader save the choice here too.",
+                    cx,
+                )
+                .child(
+                    div()
+                        .mt(px(10.))
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(
+                            Button::new("settings-comic-zoom-out")
+                                .outline()
+                                .label("-")
+                                .disabled(comic_zoom <= reader::COMIC_ZOOM_MIN)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let next = reader::clamp_comic_zoom(
+                                        this.comic_zoom.saturating_sub(reader::COMIC_ZOOM_STEP),
+                                    );
+                                    this.comic_zoom = next;
+                                    let _ = backend::save_comic_zoom(next);
+                                    this.message = format!("Comic zoom set to {next}%.");
+                                    cx.notify();
+                                })),
+                        )
+                        .child(format!("{comic_zoom}%"))
+                        .child(
+                            Button::new("settings-comic-zoom-in")
+                                .outline()
+                                .label("+")
+                                .disabled(comic_zoom >= reader::COMIC_ZOOM_MAX)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let next = reader::clamp_comic_zoom(
+                                        this.comic_zoom.saturating_add(reader::COMIC_ZOOM_STEP),
+                                    );
+                                    this.comic_zoom = next;
+                                    let _ = backend::save_comic_zoom(next);
+                                    this.message = format!("Comic zoom set to {next}%.");
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .child(
+                    div()
+                        .mt(px(10.))
+                        .flex()
+                        .gap(px(8.))
+                        .child(
+                            Button::new("settings-comic-single")
+                                .when(!comic_spread, |button| button.primary())
+                                .when(comic_spread, |button| button.outline())
+                                .label("Single page")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.comic_spread = false;
+                                    let _ = backend::save_comic_layout(reader::comic_layout_id(false));
+                                    this.message = "Comics open one page at a time.".into();
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            Button::new("settings-comic-spread")
+                                .when(comic_spread, |button| button.primary())
+                                .when(!comic_spread, |button| button.outline())
+                                .label("Two pages")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.comic_spread = true;
+                                    let _ = backend::save_comic_layout(reader::comic_layout_id(true));
+                                    this.message = "Comics open two pages at a time.".into();
+                                    cx.notify();
+                                })),
+                        ),
+                ),
+            )
     }
 
     fn confirm_clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -145,8 +294,7 @@ impl Shell {
                 .on_ok({
                     let shell = shell.clone();
                     move |_, _, cx| {
-                    shell
-                        .downgrade().update_in(cx, |this, _, cx| {
+                        shell.update(cx, |this, cx| {
                             match backend::clear_library(&this.state) {
                                 Ok(status) => {
                                     this.apply_status(status);
@@ -156,9 +304,8 @@ impl Shell {
                                 Err(error) => this.error = error.to_string(),
                             }
                             cx.notify();
-                        })
-                        .ok();
-                    true
+                        });
+                        true
                     }
                 })
         });
@@ -198,7 +345,7 @@ pub fn reader_family(id: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{reader_family, DISPLAY, FONTS};
+    use super::{reader, reader_family, TextColors, DISPLAY, FONTS};
 
     #[test]
     fn settings_offers_the_reader_font_choices() {
@@ -217,5 +364,24 @@ mod tests {
     #[test]
     fn unknown_reader_font_uses_the_reading_serif() {
         assert_eq!(reader_family("comic-sans"), DISPLAY);
+    }
+
+    #[test]
+    fn settings_uses_the_reader_color_and_zoom_ranges() {
+        let labels: Vec<_> = TextColors::CHOICES
+            .iter()
+            .map(|choice| choice.label())
+            .collect();
+        assert_eq!(labels, ["Native", "Black and white", "Inverted", "Paper"]);
+        assert_eq!(reader::ZOOM_MIN, 80);
+        assert_eq!(reader::ZOOM_MAX, 200);
+        assert_eq!(reader::clamp_zoom(10), 80);
+        assert_eq!(reader::clamp_zoom(400), 200);
+        assert_eq!(reader::COMIC_ZOOM_MIN, 50);
+        assert_eq!(reader::COMIC_ZOOM_MAX, 200);
+        assert_eq!(reader::clamp_comic_zoom(10), 50);
+        assert_eq!(reader::clamp_comic_zoom(400), 200);
+        assert!(reader::comic_layout_spread("spread"));
+        assert!(!reader::comic_layout_spread("single"));
     }
 }

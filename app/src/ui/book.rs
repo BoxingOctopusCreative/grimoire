@@ -5,7 +5,7 @@ use gpui_kit::prelude::{
     FluentBuilder as _, InteractiveElement as _, StatefulInteractiveElement as _, Styled as _,
     StyledImage as _,
 };
-use gpui_kit::{Context, IntoElement, ObjectFit, ParentElement as _, Window, div, img, px};
+use gpui_kit::{div, img, px, Context, IntoElement, ObjectFit, ParentElement as _, Window};
 
 use super::backend;
 use super::shell::Shell;
@@ -13,7 +13,11 @@ use super::theme::DISPLAY;
 use crate::library::{BookDetail, BookUpdate};
 
 impl Shell {
-    pub fn book_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+    pub fn book_page(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
         let Some(id) = self.book_id else {
             return div().child("No book selected.").into_any_element();
         };
@@ -21,7 +25,11 @@ impl Shell {
         {
             self.load_book(id, window, cx);
         }
-        let title = self.book.as_ref().map(|book| book.title.clone()).unwrap_or_else(|| "Book".into());
+        let title = self
+            .book
+            .as_ref()
+            .map(|book| book.title.clone())
+            .unwrap_or_else(|| "Book".into());
         let cover = self.book_cover.clone();
         let formats = self
             .book
@@ -37,7 +45,15 @@ impl Shell {
         let can_read = self
             .book
             .as_ref()
-            .map(|book| backend::can_read(&book.formats.iter().map(|format| format.format.clone()).collect::<Vec<_>>()))
+            .map(|book| {
+                backend::can_read(
+                    &book
+                        .formats
+                        .iter()
+                        .map(|format| format.format.clone())
+                        .collect::<Vec<_>>(),
+                )
+            })
             .unwrap_or(false);
         let targets = self.convert_targets.clone();
         let devices = self.devices.clone();
@@ -62,26 +78,41 @@ impl Shell {
             )
             .child(div().font_family(DISPLAY).text_size(px(28.)).child(title))
             .when(!self.message.is_empty(), |this| {
-                this.child(div().text_color(cx.theme().primary).child(self.message.clone()))
+                this.child(
+                    div()
+                        .text_color(cx.theme().primary)
+                        .child(self.message.clone()),
+                )
             })
             .when(!self.error.is_empty(), |this| {
-                this.child(div().text_color(cx.theme().danger).child(self.error.clone()))
+                this.child(
+                    div()
+                        .text_color(cx.theme().danger)
+                        .child(self.error.clone()),
+                )
             })
             .child(
-                div().flex().gap(px(20.)).child(book_cover(cover, cx)).child(
-                    div()
-                        .flex_1()
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .child(field("Title", Input::new(&self.title_input)))
-                        .child(field("Authors", Input::new(&self.authors_input)))
-                        .child(field("Tags", Input::new(&self.tags_input)))
-                        .child(field("Series", Input::new(&self.series_input)))
-                        .child(field("Series index", Input::new(&self.series_index_input)))
-                        .child(field("ISBN", Input::new(&self.isbn_input)))
-                        .child(field("Notes", Textarea::new(&self.comment_input).h(px(90.)))),
-                ),
+                div()
+                    .flex()
+                    .gap(px(20.))
+                    .child(book_cover(cover, cx))
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.))
+                            .child(field("Title", Input::new(&self.title_input)))
+                            .child(field("Authors", Input::new(&self.authors_input)))
+                            .child(field("Tags", Input::new(&self.tags_input)))
+                            .child(field("Series", Input::new(&self.series_input)))
+                            .child(field("Series index", Input::new(&self.series_index_input)))
+                            .child(field("ISBN", Input::new(&self.isbn_input)))
+                            .child(field(
+                                "Notes",
+                                Textarea::new(&self.comment_input).h(px(90.)),
+                            )),
+                    ),
             )
             .child(
                 div()
@@ -93,40 +124,45 @@ impl Shell {
                             .primary()
                             .label(if self.busy { "Working…" } else { "Save" })
                             .disabled(self.busy)
-                            .on_click(cx.listener(|this, _, window, cx| this.save_book_form(window, cx))),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.save_book_form(window, cx)),
+                            ),
                     )
                     .child(
                         Button::new("fetch-ol")
                             .outline()
                             .label("Fetch from Open Library")
                             .disabled(self.busy)
-                            .on_click(cx.listener(|this, _, window, cx| this.fetch_book(window, cx))),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.fetch_book(window, cx)),
+                            ),
                     )
                     .child(
                         Button::new("choose-cover")
                             .outline()
                             .label("Choose cover")
                             .disabled(self.busy)
-                            .on_click(cx.listener(|this, _, window, cx| this.choose_cover(window, cx))),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.choose_cover(window, cx)),
+                            ),
                     )
                     .when(can_read, |this| {
-                        this.child(
-                            Button::new("read-book")
-                                .outline()
-                                .label("Read")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    if let Some(id) = this.book_id {
-                                        this.open_reader(id, cx);
-                                    }
-                                })),
-                        )
+                        this.child(Button::new("read-book").outline().label("Read").on_click(
+                            cx.listener(|this, _, _, cx| {
+                                if let Some(id) = this.book_id {
+                                    this.open_reader(id, cx);
+                                }
+                            }),
+                        ))
                     })
                     .child(
                         Button::new("delete-book")
                             .danger()
                             .label("Delete")
                             .disabled(self.busy)
-                            .on_click(cx.listener(|this, _, window, cx| this.confirm_delete_book(window, cx))),
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.confirm_delete_book(window, cx)
+                            })),
                     ),
             )
             .child(
@@ -148,13 +184,22 @@ impl Shell {
                 });
                 this.child(div().flex().flex_wrap().gap(px(8.)).children(buttons))
             })
-            .child(div().font_family(DISPLAY).text_size(px(18.)).child("Send to device"))
+            .child(
+                div()
+                    .font_family(DISPLAY)
+                    .text_size(px(18.))
+                    .child("Send to device"),
+            )
             .children(devices.into_iter().map(|device| {
                 let id = device.id.clone();
                 let label = format!(
                     "{} · {}",
                     device.product,
-                    if device.supports_send { "Send" } else { "Detected" }
+                    if device.supports_send {
+                        "Send"
+                    } else {
+                        "Detected"
+                    }
                 );
                 Button::new(SharedId(format!("send-{}", device.id)))
                     .outline()
@@ -250,7 +295,11 @@ impl Shell {
             tags,
             series: {
                 let series = series.trim().to_string();
-                if series.is_empty() { None } else { Some(series) }
+                if series.is_empty() {
+                    None
+                } else {
+                    Some(series)
+                }
             },
             series_index: index.trim().parse().ok(),
             comment,
@@ -323,7 +372,11 @@ impl Shell {
         self.spawn_task(
             window,
             cx,
-            async move { backend::cover_candidates(&state, id).await.map_err(|e| e.to_string()) },
+            async move {
+                backend::cover_candidates(&state, id)
+                    .await
+                    .map_err(|e| e.to_string())
+            },
             |this, result, window, cx| {
                 this.busy = false;
                 match result {
@@ -352,11 +405,9 @@ impl Shell {
                     Button::new(SharedId(format!("cover-{}", candidate.id)))
                         .outline()
                         .label(label)
-                        .on_click(move |_, _, cx| {
+                        .on_click(move |_, window, cx| {
                             let urls = urls.clone();
-                            shell
-                                .downgrade().update_in(cx, |this, window, cx| this.apply_picked_cover(urls, window, cx))
-                                .ok();
+                            shell.update(cx, |this, cx| this.apply_picked_cover(urls, window, cx));
                         }),
                 );
             }
@@ -364,7 +415,12 @@ impl Shell {
         });
     }
 
-    fn apply_picked_cover(&mut self, urls: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
+    fn apply_picked_cover(
+        &mut self,
+        urls: Vec<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(id) = self.book_id else {
             return;
         };
@@ -373,7 +429,11 @@ impl Shell {
         self.spawn_task(
             window,
             cx,
-            async move { backend::apply_cover(&state, id, &urls).await.map_err(|e| e.to_string()) },
+            async move {
+                backend::apply_cover(&state, id, &urls)
+                    .await
+                    .map_err(|e| e.to_string())
+            },
             |this, result, window, cx| {
                 this.busy = false;
                 match result {
@@ -437,7 +497,11 @@ impl Shell {
         self.spawn_task(
             window,
             cx,
-            async move { backend::send(&state, id, &device_id).await.map_err(|e| e.to_string()) },
+            async move {
+                backend::send(&state, id, &device_id)
+                    .await
+                    .map_err(|e| e.to_string())
+            },
             |this, result, _, cx| {
                 this.busy = false;
                 match result {
@@ -460,15 +524,16 @@ impl Shell {
                 .description("Delete this book from the library?")
                 .on_ok({
                     let shell = shell.clone();
-                    move |_, _, cx| {
-                    shell
-                        .downgrade().update_in(cx, |this, window, cx| {
+                    move |_, window, cx| {
+                        shell.update(cx, |this, cx| {
                             if let Some(id) = this.book_id {
                                 let state = this.state.clone();
                                 this.spawn_io(
                                     window,
                                     cx,
-                                    move || backend::remove_book(&state, id).map_err(|e| e.to_string()),
+                                    move || {
+                                        backend::remove_book(&state, id).map_err(|e| e.to_string())
+                                    },
                                     |this, result, window, cx| {
                                         if let Err(error) = result {
                                             this.error = error;
@@ -481,9 +546,8 @@ impl Shell {
                                     },
                                 );
                             }
-                        })
-                        .ok();
-                    true
+                        });
+                        true
                     }
                 })
         });
@@ -507,7 +571,10 @@ fn book_cover(path: Option<std::path::PathBuf>, cx: &gpui_kit::App) -> impl Into
         .overflow_hidden()
         .bg(cx.theme().muted)
         .child(match path {
-            Some(path) => img(path).size_full().object_fit(ObjectFit::Cover).into_any_element(),
+            Some(path) => img(path)
+                .size_full()
+                .object_fit(ObjectFit::Cover)
+                .into_any_element(),
             None => div().size_full().into_any_element(),
         })
 }

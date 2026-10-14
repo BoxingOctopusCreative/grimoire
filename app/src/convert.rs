@@ -174,8 +174,7 @@ fn pick_source_for_epub(formats: &[String]) -> Option<&'static str> {
 fn book_formats(conn: &Connection, book_id: i64) -> AppResult<Vec<String>> {
     let mut stmt = conn.prepare("SELECT format FROM formats WHERE book = ?1")?;
     let rows = stmt.query_map([book_id], |row| row.get(0))?;
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(Into::into)
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
 fn book_title_author(conn: &Connection, book_id: i64) -> AppResult<(String, String, String)> {
@@ -391,8 +390,8 @@ fn convert_mobi7_file_to_epub(
     fallback_title: &str,
     fallback_author: &str,
 ) -> AppResult<()> {
-    let book = Mobi::from_path(source)
-        .map_err(|e| err(format!("Could not parse AZW3/MOBI: {e}")))?;
+    let book =
+        Mobi::from_path(source).map_err(|e| err(format!("Could not parse AZW3/MOBI: {e}")))?;
 
     match book.encryption() {
         Encryption::No => {}
@@ -450,8 +449,8 @@ fn convert_txt_file_to_epub(
     title: &str,
     author: &str,
 ) -> AppResult<()> {
-    let text = fs::read_to_string(source)
-        .map_err(|e| err(format!("Could not read text file: {e}")))?;
+    let text =
+        fs::read_to_string(source).map_err(|e| err(format!("Could not read text file: {e}")))?;
     let body = format!("<pre>{}</pre>", escape_xml(&text));
     let html = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>

@@ -862,7 +862,12 @@ fn should_skip_device_dir(name: &str) -> bool {
     )
 }
 
-fn device_book_from_file(filename: &str, path: String, size: u64, handle: Option<u64>) -> Option<DeviceBook> {
+fn device_book_from_file(
+    filename: &str,
+    path: String,
+    size: u64,
+    handle: Option<u64>,
+) -> Option<DeviceBook> {
     let format = ebook_extension(filename)?.to_string();
     Some(DeviceBook {
         title: title_from_filename(filename),
@@ -936,7 +941,8 @@ fn scan_mount_ebooks(mount: &str) -> AppResult<Vec<DeviceBook>> {
         .map_err(|e| err(format!("Could not open device mount: {e}")))?;
 
     let mut books = Vec::new();
-    let mut stack: Vec<(PathBuf, String, usize)> = vec![(canonical_mount.clone(), String::new(), 0)];
+    let mut stack: Vec<(PathBuf, String, usize)> =
+        vec![(canonical_mount.clone(), String::new(), 0)];
 
     while let Some((dir, path_prefix, depth)) = stack.pop() {
         if books.len() >= MAX_DEVICE_BOOKS || depth > MAX_DEVICE_SCAN_DEPTH {

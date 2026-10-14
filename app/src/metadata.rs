@@ -34,7 +34,12 @@ pub fn extract_from_file(path: &Path) -> AppResult<ExtractedMetadata> {
         _ => ExtractedMetadata::default(),
     };
 
-    if meta.title.as_ref().map(|t| t.trim().is_empty()).unwrap_or(true) {
+    if meta
+        .title
+        .as_ref()
+        .map(|t| t.trim().is_empty())
+        .unwrap_or(true)
+    {
         meta.title = path.file_stem().map(|s| s.to_string_lossy().into_owned());
     }
     if meta.authors.is_empty() {
@@ -52,9 +57,8 @@ fn extract_comic(path: &Path) -> AppResult<ExtractedMetadata> {
 
 fn extract_epub(path: &Path) -> AppResult<ExtractedMetadata> {
     let file = File::open(path)?;
-    let mut archive = ZipArchive::new(file).map_err(|e| {
-        crate::error::err(format!("Could not read EPUB archive: {e}"))
-    })?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|e| crate::error::err(format!("Could not read EPUB archive: {e}")))?;
 
     let container_xml = read_zip_string(&mut archive, "META-INF/container.xml")?;
     let opf_path = find_opf_path(&container_xml).unwrap_or_else(|| "content.opf".to_string());
@@ -131,7 +135,10 @@ fn identifier_kind(value: &str, opf: &str) -> String {
 }
 
 fn looks_like_isbn(s: &str) -> bool {
-    let digits: String = s.chars().filter(|c| c.is_ascii_digit() || *c == 'x' || *c == 'X').collect();
+    let digits: String = s
+        .chars()
+        .filter(|c| c.is_ascii_digit() || *c == 'x' || *c == 'X')
+        .collect();
     digits.len() == 10 || digits.len() == 13
 }
 
@@ -228,10 +235,7 @@ fn decode_pdf_literal(s: &str) -> String {
 
 fn decode_pdf_hex(s: &str) -> Option<String> {
     let end = s.find('>')?;
-    let hex: String = s[..end]
-        .chars()
-        .filter(|c| c.is_ascii_hexdigit())
-        .collect();
+    let hex: String = s[..end].chars().filter(|c| c.is_ascii_hexdigit()).collect();
     if hex.len() < 2 {
         return None;
     }
@@ -325,10 +329,10 @@ fn extract_mobi(path: &Path) -> AppResult<ExtractedMetadata> {
     let mut cover_record: Option<u32> = None;
 
     if exth_off + 12 <= record0.len() && &record0[exth_off..exth_off + 4] == b"EXTH" {
-        let exth_len = u32::from_be_bytes(record0[exth_off + 4..exth_off + 8].try_into().unwrap())
-            as usize;
-        let count = u32::from_be_bytes(record0[exth_off + 8..exth_off + 12].try_into().unwrap())
-            as usize;
+        let exth_len =
+            u32::from_be_bytes(record0[exth_off + 4..exth_off + 8].try_into().unwrap()) as usize;
+        let count =
+            u32::from_be_bytes(record0[exth_off + 8..exth_off + 12].try_into().unwrap()) as usize;
         let mut pos = exth_off + 12;
         let end = (exth_off + exth_len).min(record0.len());
         for _ in 0..count {
@@ -399,7 +403,8 @@ fn extract_mobi(path: &Path) -> AppResult<ExtractedMetadata> {
         }
     }
 
-    let cover = cover_record.and_then(|idx| read_mobi_image_record(&data, num_records, idx as usize));
+    let cover =
+        cover_record.and_then(|idx| read_mobi_image_record(&data, num_records, idx as usize));
 
     Ok(ExtractedMetadata {
         title,
@@ -567,7 +572,9 @@ fn find_cover<R: Read + std::io::Seek>(
     opf_path: &str,
 ) -> Option<Vec<u8>> {
     let href = cover_href_from_opf(opf)?;
-    let base = Path::new(opf_path).parent().unwrap_or_else(|| Path::new(""));
+    let base = Path::new(opf_path)
+        .parent()
+        .unwrap_or_else(|| Path::new(""));
     let full = normalize_zip_path(&base.join(href).to_string_lossy());
     let mut file = archive.by_name(&full).ok()?;
     let mut buf = Vec::new();
@@ -618,9 +625,7 @@ fn item_href_for_id(opf: &str, id: &str) -> Option<String> {
 }
 
 fn normalize_zip_path(path: &str) -> String {
-    path.replace('\\', "/")
-        .trim_start_matches("./")
-        .to_string()
+    path.replace('\\', "/").trim_start_matches("./").to_string()
 }
 
 /// Pick a cover filename and MIME type from image magic bytes.
@@ -663,30 +668,49 @@ mod tests {
         </package>"#;
 
         assert_eq!(
-            first_tag_text(opf, "dc:title").map(|s| decode_xml_entities(&s)).as_deref(),
+            first_tag_text(opf, "dc:title")
+                .map(|s| decode_xml_entities(&s))
+                .as_deref(),
             Some("Dune & Messiah")
         );
         assert_eq!(all_tag_texts(opf, "dc:creator").len(), 2);
-        assert_eq!(meta_content_by_name(opf, "calibre:series").as_deref(), Some("Dune"));
         assert_eq!(
-            meta_content_by_name(opf, "calibre:series_index")
-                .and_then(|s| s.parse::<f64>().ok()),
+            meta_content_by_name(opf, "calibre:series").as_deref(),
+            Some("Dune")
+        );
+        assert_eq!(
+            meta_content_by_name(opf, "calibre:series_index").and_then(|s| s.parse::<f64>().ok()),
             Some(2.0)
         );
-        assert_eq!(cover_href_from_opf(opf).as_deref(), Some("images/cover.jpg"));
+        assert_eq!(
+            cover_href_from_opf(opf).as_deref(),
+            Some("images/cover.jpg")
+        );
     }
 
     #[test]
     fn parses_pdf_info_literals() {
         let pdf = "%PDF-1.4\n1 0 obj<< /Title (Neuromancer) /Author (William Gibson) >>endobj";
-        assert_eq!(pdf_info_string(pdf, "/Title").as_deref(), Some("Neuromancer"));
-        assert_eq!(pdf_info_string(pdf, "/Author").as_deref(), Some("William Gibson"));
+        assert_eq!(
+            pdf_info_string(pdf, "/Title").as_deref(),
+            Some("Neuromancer")
+        );
+        assert_eq!(
+            pdf_info_string(pdf, "/Author").as_deref(),
+            Some("William Gibson")
+        );
     }
 
     #[test]
     fn detects_cover_mime() {
-        assert_eq!(cover_file_info(&[0x89, b'P', b'N', b'G']), ("cover.png", "image/png"));
-        assert_eq!(cover_file_info(&[0xFF, 0xD8, 0xFF, 0xE0]), ("cover.jpg", "image/jpeg"));
+        assert_eq!(
+            cover_file_info(&[0x89, b'P', b'N', b'G']),
+            ("cover.png", "image/png")
+        );
+        assert_eq!(
+            cover_file_info(&[0xFF, 0xD8, 0xFF, 0xE0]),
+            ("cover.jpg", "image/jpeg")
+        );
     }
 
     #[test]

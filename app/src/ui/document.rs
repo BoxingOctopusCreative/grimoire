@@ -125,7 +125,11 @@ fn html_title(html: &str) -> Option<String> {
     let end_rel = lower[after..].find("</h1")?;
     let text = html_to_text(&html[after..after + end_rel]);
     let text = text.trim().to_string();
-    if text.is_empty() { None } else { Some(text) }
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
 }
 
 pub fn html_to_text(html: &str) -> String {
@@ -205,4 +209,232 @@ pub fn html_to_text(html: &str) -> String {
         }
     }
     collapsed.trim().to_string()
+}
+
+/// One screen of reading. A chapter or section can span many pages, and a short
+/// section continues on the same page as the text that follows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PageBlock {
+    pub heading: Option<String>,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Page {
+    pub blocks: Vec<PageBlock>,
+    /// Chapter index and body offset where this page starts.
+    pub chapter: usize,
+    pub offset: usize,
+}
+
+/// Pack chapter text into pages of `lines_per_page` wrapped lines.
+pub fn paginate(chapters: &[Chapter], lines_per_page: usize, chars_per_line: usize) -> Vec<Page> {
+    let lines_per_page = lines_per_page.max(1);
+    let chars_per_line = chars_per_line.max(1);
+    let mut pages = Vec::new();
+    let mut draft = Draft::new(0, 0);
+
+    for (chapter_index, chapter) in chapters.iter().enumerate() {
+        let heading_lines = 2.min(lines_per_page);
+        if draft.lines_used > 0 && draft.lines_used + heading_lines + 1 > lines_per_page {
+            pages.push(draft.finish());
+            draft = Draft::new(chapter_index, 0);
+        }
+        if draft.blocks.is_empty() {
+            draft.chapter = chapter_index;
+            draft.offset = 0;
+        }
+        draft.blocks.push(PageBlock {
+            heading: Some(chapter.title.clone()),
+            text: String::new(),
+        });
+        draft.lines_used += heading_lines;
+
+        let mut offset = 0usize;
+        for (paragraph_index, paragraph) in chapter.body.split('\n').enumerate() {
+            if paragraph_index > 0 {
+                offset += 1;
+            }
+            if paragraph.is_empty() {
+                if draft.lines_used > 0 && draft.lines_used < lines_per_page {
+                    push_line(&mut draft.blocks, "");
+                    draft.lines_used += 1;
+                }
+                continue;
+            }
+            let wrapped = wrap_words(paragraph, chars_per_line);
+            let mut consumed = 0usize;
+            for line in wrapped {
+                if draft.lines_used >= lines_per_page {
+                    pages.push(draft.finish());
+                    draft = Draft::new(chapter_index, offset + consumed);
+                    draft.blocks.push(PageBlock {
+                        heading: None,
+                        text: String::new(),
+                    });
+                }
+                push_line(&mut draft.blocks, &line);
+                draft.lines_used += 1;
+                consumed += line.chars().count();
+                if consumed < paragraph.chars().count() {
+                    consumed += 1;
+                }
+            }
+            offset += paragraph.chars().count();
+        }
+    }
+    if draft.lines_used > 0 {
+        pages.push(draft.finish());
+    }
+    pages
+}
+
+/// Page whose start is at or just before `chapter` / `offset`.
+pub fn page_index_at(pages: &[Page], chapter: usize, offset: usize) -> usize {
+    let mut found = 0;
+    for (index, page) in pages.iter().enumerate() {
+        if page.chapter < chapter || (page.chapter == chapter && page.offset <= offset) {
+            found = index;
+        } else {
+            break;
+        }
+    }
+    found
+}
+
+struct Draft {
+    blocks: Vec<PageBlock>,
+    lines_used: usize,
+    chapter: usize,
+    offset: usize,
+}
+
+impl Draft {
+    fn new(chapter: usize, offset: usize) -> Self {
+        Self {
+            blocks: Vec::new(),
+            lines_used: 0,
+            chapter,
+            offset,
+        }
+    }
+
+    fn finish(self) -> Page {
+        Page {
+            blocks: self.blocks,
+            chapter: self.chapter,
+            offset: self.offset,
+        }
+    }
+}
+
+fn push_line(blocks: &mut [PageBlock], line: &str) {
+    let Some(block) = blocks.last_mut() else {
+        return;
+    };
+    if !block.text.is_empty() {
+        block.text.push('\n');
+    }
+    block.text.push_str(line);
+}
+
+fn wrap_words(paragraph: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in paragraph.split_whitespace() {
+        let word_len = word.chars().count();
+        if current.is_empty() {
+            if word_len <= width {
+                current = word.to_string();
+            } else {
+                let mut rest = word;
+                while rest.chars().count() > width {
+                    let (head, tail) = split_chars(rest, width);
+                    lines.push(head.to_string());
+                    rest = tail;
+                }
+                current = rest.to_string();
+            }
+            continue;
+        }
+        if current.chars().count() + 1 + word_len <= width {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            lines.push(std::mem::take(&mut current));
+            current = word.to_string();
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
+fn split_chars(text: &str, count: usize) -> (&str, &str) {
+    let mut end = text.len();
+    for (index, (byte, _)) in text.char_indices().enumerate() {
+        if index == count {
+            end = byte;
+            break;
+        }
+    }
+    text.split_at(end)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chapter(title: &str, body: &str) -> Chapter {
+        Chapter {
+            title: title.into(),
+            body: body.into(),
+        }
+    }
+
+    #[test]
+    fn long_chapter_turns_one_screen_at_a_time() {
+        let body = (0..40)
+            .map(|n| format!("sentence {n} of the same chapter"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let pages = paginate(&[chapter("One", &body)], 4, 24);
+        assert!(
+            pages.len() > 1,
+            "a long chapter should be more than one page"
+        );
+        assert!(pages.iter().all(|page| page.chapter == 0));
+        let first = &pages[0].blocks[0].text;
+        let second = &pages[1].blocks[0].text;
+        assert!(!first.is_empty());
+        assert!(!second.is_empty());
+        assert_ne!(first, second);
+        assert!(pages[0].blocks[0].heading.as_deref() == Some("One"));
+        assert!(pages[1].blocks[0].heading.is_none());
+    }
+
+    #[test]
+    fn short_sections_share_a_page() {
+        let pages = paginate(
+            &[chapter("Alpha", "alpha text"), chapter("Beta", "beta text")],
+            12,
+            40,
+        );
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].blocks.len(), 2);
+        assert_eq!(pages[0].blocks[1].heading.as_deref(), Some("Beta"));
+    }
+
+    #[test]
+    fn page_index_stays_inside_a_split_chapter() {
+        let body = (0..30)
+            .map(|n| format!("word{n}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let pages = paginate(&[chapter("One", &body), chapter("Two", "end")], 3, 12);
+        let middle = pages.len() / 2;
+        let page = &pages[middle];
+        assert_eq!(page_index_at(&pages, page.chapter, page.offset), middle);
+    }
 }

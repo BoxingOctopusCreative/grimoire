@@ -1,18 +1,19 @@
+mod about;
 mod backend;
 mod book;
+mod chime;
 mod devices;
 mod document;
 mod icon;
 mod library;
+mod menu;
 mod reader;
 mod settings;
 mod shell;
 mod theme;
 
 use gpui_kit::AppContext as _;
-use gpui_kit::{
-    App, TitlebarOptions, WindowBounds, WindowOptions, application, point, px, size,
-};
+use gpui_kit::{application, point, px, size, App, TitlebarOptions, WindowBounds, WindowOptions};
 use std::future::pending;
 
 pub use shell::Shell;
@@ -35,10 +36,16 @@ pub fn launch() {
             cx.set_global(backend::TokioRt(handle));
             theme::apply_saved(cx);
             icon::install();
-            gpui_kit::open_window(main_window_options(cx), cx, |window, cx| {
-                cx.new(|cx| Shell::new(window, cx))
-            })
-            .expect("failed to open Grimoire");
+            let (main_window, shell) =
+                gpui_kit::open_window(main_window_options(cx), cx, |window, cx| {
+                    cx.new(|cx| Shell::new(window, cx))
+                })
+                .expect("failed to open Grimoire");
+            menu::install(main_window, shell, cx);
+            // A new window does not take focus away from the app that launched Grimoire.
+            #[cfg(target_os = "macos")]
+            cx.activate(true);
+            let _ = main_window.update(cx, |_, window, _| window.activate_window());
         });
 }
 

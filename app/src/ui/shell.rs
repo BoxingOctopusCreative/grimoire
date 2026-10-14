@@ -2,17 +2,17 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
+use gpui_kit::base::InteractiveElementExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
-use gpui_kit::base::InteractiveElementExt as _;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme as _, IconName, Selectable as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::AppContext as _;
 use gpui_kit::{
-    Anchor, App, Context, Entity, ExternalPaths, FontWeight, Image, ImageFormat,
-    InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Render, Styled as _,
-    Subscription, Window, div, img, px,
+    div, img, px, relative, Anchor, App, Context, Entity, ExternalPaths, FontWeight, Image,
+    ImageFormat, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Render,
+    Styled as _, Subscription, Window,
 };
 
 use super::backend::{self, LibraryStatus, TokioRt};
@@ -41,6 +41,28 @@ pub enum FormatKind {
     Comic,
 }
 
+#[derive(Clone, Debug)]
+pub struct ImportProgress {
+    pub done: usize,
+    pub total: usize,
+    pub name: String,
+}
+
+pub(crate) fn import_status_label(progress: &ImportProgress) -> String {
+    if progress.total == 0 {
+        return progress.name.clone();
+    }
+    let current = (progress.done + 1).min(progress.total);
+    format!("Importing {current} of {}", progress.total)
+}
+
+fn import_fraction(done: usize, total: usize) -> f32 {
+    if total == 0 {
+        return 0.0;
+    }
+    (done as f32 / total as f32).clamp(0.0, 1.0)
+}
+
 pub struct Shell {
     pub state: AppState,
     pub route: Route,
@@ -48,8 +70,15 @@ pub struct Shell {
     pub device_id: Option<String>,
     pub theme_pref: String,
     pub reader_font: String,
+    pub reader_zoom: u32,
+    pub reader_colors: String,
+    pub comic_zoom: u32,
+    pub comic_spread: bool,
     pub devices: Vec<EbookReaderDevice>,
     pub notice: Option<String>,
+    notice_gen: u64,
+    pub(crate) device_io: u32,
+    pub(crate) device_missing_polls: u8,
     pub booting: bool,
     pub boot_error: String,
     pub library_open: bool,
@@ -61,6 +90,7 @@ pub struct Shell {
     pub search_gen: u64,
     pub loading: bool,
     pub busy: bool,
+    pub import_progress: Option<ImportProgress>,
     pub error: String,
     pub message: String,
     pub filters_open: bool,
@@ -94,15 +124,15 @@ pub struct Shell {
     pub device_query: Entity<InputState>,
     pub device_selected: HashSet<String>,
     pub device_select_mode: bool,
+    pub(crate) device_prompt_open: bool,
     titlebar_drag: bool,
     _subs: Vec<Subscription>,
 }
 
 impl Shell {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let search = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Search title, author, or tag")
-        });
+        let search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search title, author, or tag"));
         let bulk_tags = cx.new(|cx| InputState::new(window, cx).placeholder("Tags to add"));
         let bulk_series_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Series name (blank clears)"));
@@ -115,7 +145,8 @@ impl Shell {
         let series_index_input = cx.new(|cx| InputState::new(window, cx));
         let isbn_input = cx.new(|cx| InputState::new(window, cx));
         let comment_input = cx.new(|cx| TextareaState::new(window, cx).placeholder("Notes"));
-        let device_query = cx.new(|cx| InputState::new(window, cx).placeholder("Filter device books"));
+        let device_query =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Filter device books"));
 
         let search_sub = cx.subscribe_in(&search, window, |this, input, event, window, cx| {
             if matches!(event, InputEvent::Change) {
@@ -127,6 +158,12 @@ impl Shell {
         let config = backend::config().unwrap_or_default();
         let theme_pref = config.theme.clone();
         let reader_font = config.reader_font.clone();
+        let reader_zoom = super::reader::clamp_zoom(config.reader_zoom);
+        let reader_colors = super::reader::TextColors::parse(&config.reader_colors)
+            .id()
+            .to_string();
+        let comic_zoom = super::reader::clamp_comic_zoom(config.comic_zoom);
+        let comic_spread = super::reader::comic_layout_spread(&config.comic_layout);
 
         let shell = Self {
             state: AppState::new(),
@@ -135,8 +172,15 @@ impl Shell {
             device_id: None,
             theme_pref,
             reader_font,
+            reader_zoom,
+            reader_colors,
+            comic_zoom,
+            comic_spread,
             devices: Vec::new(),
             notice: None,
+            notice_gen: 0,
+            device_io: 0,
+            device_missing_polls: 0,
             booting: true,
             boot_error: String::new(),
             library_open: false,
@@ -148,6 +192,7 @@ impl Shell {
             search_gen: 0,
             loading: true,
             busy: false,
+            import_progress: None,
             error: String::new(),
             message: String::new(),
             filters_open: true,
@@ -181,6 +226,7 @@ impl Shell {
             device_query,
             device_selected: HashSet::new(),
             device_select_mode: false,
+            device_prompt_open: false,
             titlebar_drag: false,
             _subs: vec![search_sub],
         };
@@ -268,32 +314,76 @@ impl Shell {
     fn watch_devices(&self, window: &mut Window, cx: &mut Context<Self>) {
         let runtime = self.runtime(cx);
         cx.spawn_in(window, async move |this, cx| {
-            let mut seen: Vec<String> = Vec::new();
+            let mut seen: HashSet<String> = HashSet::new();
+            let mut prompted: HashSet<String> = HashSet::new();
+            let mut chimed: HashSet<String> = HashSet::new();
+            let mut primed = false;
             loop {
                 let next = runtime.spawn(async { backend::readers().await }).await;
-                let _ = this.update(cx, |this, cx| {
+                let _ = this.update_in(cx, |this, window, cx| {
                     if let Ok(Ok(devices)) = next {
-                        let ids: Vec<String> = devices.iter().map(|d| d.id.clone()).collect();
-                        if !seen.is_empty() {
-                            for device in &devices {
-                                if !seen.iter().any(|id| id == &device.id) {
-                                    this.notice = Some(format!("{} connected.", device.product));
-                                }
-                            }
+                        let ids: HashSet<String> =
+                            devices.iter().map(|device| device.id.clone()).collect();
+                        if primed {
+                            let mut left = false;
                             for id in &seen {
-                                if !ids.iter().any(|next| next == id) {
+                                if !ids.contains(id) {
+                                    left = true;
                                     let name = this
                                         .devices
                                         .iter()
                                         .find(|device| &device.id == id)
                                         .map(|device| device.product.clone())
                                         .unwrap_or_else(|| "eReader".into());
-                                    this.notice = Some(format!("{name} disconnected."));
+                                    this.show_notice(format!("{name} disconnected."), window, cx);
                                 }
                             }
+                            if left {
+                                super::chime::play_disconnect_chime();
+                            }
                         }
+                        primed = true;
+                        prompted.retain(|id| ids.contains(id));
+                        chimed.retain(|id| ids.contains(id));
+                        let offer: Vec<EbookReaderDevice> = devices
+                            .iter()
+                            .filter(|device| !prompted.contains(&device.id))
+                            .cloned()
+                            .collect();
+                        let offer_ids: Vec<String> =
+                            offer.iter().map(|device| device.id.clone()).collect();
+                        let fresh: Vec<String> = offer_ids
+                            .iter()
+                            .filter(|id| !chimed.contains(*id))
+                            .cloned()
+                            .collect();
+                        for id in &fresh {
+                            chimed.insert(id.clone());
+                        }
+                        let will_ask = !this.device_prompt_open
+                            && super::devices::offer_manage(&offer_ids, this.device_id.as_deref());
+                        if !fresh.is_empty() && !will_ask {
+                            super::chime::play_connect_chime();
+                        }
+                        this.note_open_device(&ids);
                         seen = ids;
                         this.devices = devices;
+                        if this.device_prompt_open {
+                            // Ask on a later pass, once the current question is closed.
+                        } else if super::devices::offer_manage(
+                            &offer_ids,
+                            this.device_id.as_deref(),
+                        ) {
+                            for id in &offer_ids {
+                                prompted.insert(id.clone());
+                            }
+                            this.device_prompt_open = true;
+                            this.ask_to_manage(offer, window, cx);
+                        } else {
+                            for id in offer_ids {
+                                prompted.insert(id);
+                            }
+                        }
                         cx.notify();
                     }
                 });
@@ -302,6 +392,27 @@ impl Shell {
                     .await
                     .ok();
             }
+        })
+        .detach();
+    }
+
+    fn show_notice(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.notice_gen = self.notice_gen.wrapping_add(1);
+        let generation = self.notice_gen;
+        self.notice = Some(text);
+        let runtime = self.runtime(cx);
+        cx.spawn_in(window, async move |this, cx| {
+            let _ = runtime
+                .spawn(async {
+                    tokio::time::sleep(Duration::from_secs(super::devices::NOTICE_SECS)).await;
+                })
+                .await;
+            let _ = this.update_in(cx, |this, _window, cx| {
+                if this.notice_gen == generation {
+                    this.notice = None;
+                    cx.notify();
+                }
+            });
         })
         .detach();
     }
@@ -367,6 +478,9 @@ impl Render for Shell {
                 this.import_paths(files, window, cx);
             }))
             .child(self.topbar(window, cx))
+            .when_some(self.import_progress.clone(), |this, progress| {
+                this.child(import_progress_bar(&progress, cx))
+            })
             .child(
                 div()
                     .flex_1()
@@ -470,9 +584,30 @@ impl Shell {
                         }
                     })),
             )
-            .child(self.nav_button("nav-library", IconName::BookOpen, "Library", self.route == Route::Library && self.book_id.is_none(), Route::Library, cx))
-            .child(self.nav_button("nav-devices", IconName::HardDrive, "Devices", self.route == Route::Devices, Route::Devices, cx))
-            .child(self.nav_button("nav-settings", IconName::Settings, "Settings", self.route == Route::Settings, Route::Settings, cx))
+            .child(self.nav_button(
+                "nav-library",
+                IconName::BookOpen,
+                "Library",
+                self.route == Route::Library && self.book_id.is_none(),
+                Route::Library,
+                cx,
+            ))
+            .child(self.nav_button(
+                "nav-devices",
+                IconName::HardDrive,
+                "Devices",
+                self.route == Route::Devices,
+                Route::Devices,
+                cx,
+            ))
+            .child(self.nav_button(
+                "nav-settings",
+                IconName::Settings,
+                "Settings",
+                self.route == Route::Settings,
+                Route::Settings,
+                cx,
+            ))
             .child(self.theme_menu(cx))
             .child(div().w(px(4.)).text_color(muted))
     }
@@ -515,36 +650,39 @@ impl Shell {
         } else {
             0
         };
-        div().relative().child(
-            Button::new(id)
-                .ghost()
-                .compact()
-                .icon(icon)
-                .selected(active)
-                .tooltip(tip)
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.book_id = None;
-                    this.device_id = None;
-                    this.route = route;
-                    if route == Route::Devices {
-                        this.refresh_devices(window, cx);
-                    }
-                    cx.notify();
-                })),
-        ).when(count > 0, |this| {
-            this.child(
-                div()
-                    .absolute()
-                    .top(px(0.))
-                    .right(px(0.))
-                    .px(px(4.))
-                    .rounded(px(99.))
-                    .text_size(px(10.))
-                    .bg(cx.theme().primary)
-                    .text_color(cx.theme().primary_foreground)
-                    .child(count.to_string()),
+        div()
+            .relative()
+            .child(
+                Button::new(id)
+                    .ghost()
+                    .compact()
+                    .icon(icon)
+                    .selected(active)
+                    .tooltip(tip)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.book_id = None;
+                        this.device_id = None;
+                        this.route = route;
+                        if route == Route::Devices {
+                            this.refresh_devices(window, cx);
+                        }
+                        cx.notify();
+                    })),
             )
-        })
+            .when(count > 0, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .top(px(0.))
+                        .right(px(0.))
+                        .px(px(4.))
+                        .rounded(px(99.))
+                        .text_size(px(10.))
+                        .bg(cx.theme().primary)
+                        .text_color(cx.theme().primary_foreground)
+                        .child(count.to_string()),
+                )
+            })
     }
 
     fn body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
@@ -612,6 +750,55 @@ pub fn muted_page(text: &str, cx: &App) -> impl IntoElement {
         .child(text.to_string())
 }
 
+fn import_progress_bar(progress: &ImportProgress, cx: &App) -> impl IntoElement {
+    let muted = cx.theme().muted_foreground;
+    let show_name = progress.total > 0;
+    div()
+        .px(px(16.))
+        .pt(px(8.))
+        .pb(px(10.))
+        .flex()
+        .flex_col()
+        .gap(px(6.))
+        .bg(cx.theme().sidebar)
+        .border_b_1()
+        .border_color(cx.theme().border)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .text_size(px(13.))
+                .child(import_status_label(progress))
+                .when(show_name, |this| {
+                    this.child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_color(muted)
+                            .child(progress.name.clone()),
+                    )
+                }),
+        )
+        .child(
+            div()
+                .w_full()
+                .h(px(4.))
+                .rounded(px(99.))
+                .overflow_hidden()
+                .bg(cx.theme().muted)
+                .child(
+                    div()
+                        .h_full()
+                        .w(relative(import_fraction(progress.done, progress.total)))
+                        .bg(cx.theme().primary),
+                ),
+        )
+}
+
 pub fn section_title(text: &str, count: Option<usize>) -> impl IntoElement {
     div()
         .flex()
@@ -645,4 +832,40 @@ fn theme_choice(
         .on_click(move |_, _, cx| {
             shell.update(cx, |this, cx| this.set_theme(pref, cx));
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{import_fraction, import_status_label, ImportProgress};
+
+    #[test]
+    fn import_status_counts_the_book_in_progress() {
+        assert_eq!(
+            import_status_label(&ImportProgress {
+                done: 0,
+                total: 0,
+                name: "Scanning for books…".into(),
+            }),
+            "Scanning for books…"
+        );
+        assert_eq!(
+            import_status_label(&ImportProgress {
+                done: 0,
+                total: 1,
+                name: "Tale.epub".into(),
+            }),
+            "Importing 1 of 1"
+        );
+        assert_eq!(
+            import_status_label(&ImportProgress {
+                done: 2,
+                total: 10,
+                name: "Next.epub".into(),
+            }),
+            "Importing 3 of 10"
+        );
+        assert_eq!(import_fraction(0, 0), 0.0);
+        assert_eq!(import_fraction(2, 10), 0.2);
+        assert_eq!(import_fraction(10, 10), 1.0);
+    }
 }

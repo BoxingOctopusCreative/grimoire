@@ -5,7 +5,7 @@ use gpui_kit::component::{ActiveTheme as _, Disableable as _, Selectable as _, W
 use gpui_kit::prelude::{
     FluentBuilder as _, InteractiveElement as _, StatefulInteractiveElement as _, Styled as _,
 };
-use gpui_kit::{Context, IntoElement, ParentElement as _, Window, div, px};
+use gpui_kit::{div, px, Context, IntoElement, ParentElement as _, Window};
 
 use super::backend;
 use super::shell::Shell;
@@ -13,7 +13,11 @@ use super::theme::DISPLAY;
 use crate::kindle::{ConnectionKind, DeviceBook, DeviceBookTarget};
 
 impl Shell {
-    pub fn devices_page(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    pub fn devices_page(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let devices = self.devices.clone();
         let history = self.sync_history.clone();
         div()
@@ -120,6 +124,84 @@ impl Shell {
             }))
     }
 
+    pub fn ask_to_manage(
+        &mut self,
+        devices: Vec<crate::kindle::EbookReaderDevice>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        #[cfg(target_os = "macos")]
+        cx.activate(true);
+        window.activate_window();
+        // Activation stops a chime that is already playing, so start this one after the window is front.
+        self.chime_after_activation(window, cx);
+        let products: Vec<String> = devices
+            .iter()
+            .map(|device| device.product.clone())
+            .collect();
+        let ids: Vec<String> = devices.iter().map(|device| device.id.clone()).collect();
+        let (title, description) = manage_prompt(&products);
+        let shell = cx.entity().clone();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            alert
+                .confirm()
+                .title(title.clone())
+                .description(description.clone())
+                .ok_text("Manage")
+                .cancel_text("Not now")
+                .on_ok({
+                    let shell = shell.clone();
+                    let ids = ids.clone();
+                    move |_, window, cx| {
+                        shell.update(cx, |this, cx| {
+                            this.open_connected_devices(ids.clone(), window, cx);
+                        });
+                        true
+                    }
+                })
+                .on_close({
+                    let shell = shell.clone();
+                    move |_, _, cx| {
+                        shell.update(cx, |this, _cx| this.device_prompt_open = false);
+                    }
+                })
+        });
+    }
+
+    fn chime_after_activation(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let runtime = self.runtime(cx);
+        cx.spawn_in(window, async move |_this, cx| {
+            let _ = runtime
+                .spawn(async {
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                })
+                .await;
+            let _ = cx.update(|_window, _cx| super::chime::play_connect_chime());
+        })
+        .detach();
+    }
+
+    fn open_connected_devices(
+        &mut self,
+        ids: Vec<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.book_id = None;
+        self.route = super::shell::Route::Devices;
+        self.device_selected.clear();
+        self.device_select_mode = false;
+        if let [id] = ids.as_slice() {
+            self.device_id = Some(id.clone());
+            self.device_library = None;
+            self.scan_device(window, cx);
+        } else {
+            self.device_id = None;
+            self.refresh_devices(window, cx);
+        }
+        cx.notify();
+    }
+
     pub fn refresh_devices(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.devices_loading = true;
         let state = self.state.clone();
@@ -150,13 +232,22 @@ impl Shell {
         );
     }
 
-    pub fn device_library_page(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    pub fn device_library_page(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let books = self
             .device_library
             .as_ref()
             .map(|library| library.books.clone())
             .unwrap_or_default();
-        let query = self.device_query.read(cx).value().to_string().to_lowercase();
+        let query = self
+            .device_query
+            .read(cx)
+            .value()
+            .to_string()
+            .to_lowercase();
         let filtered: Vec<DeviceBook> = books
             .into_iter()
             .filter(|book| {
@@ -201,7 +292,11 @@ impl Shell {
                     .child(
                         Button::new("device-select")
                             .ghost()
-                            .label(if self.device_select_mode { "Done" } else { "Select" })
+                            .label(if self.device_select_mode {
+                                "Done"
+                            } else {
+                                "Select"
+                            })
                             .selected(self.device_select_mode)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.device_select_mode = !this.device_select_mode;
@@ -217,7 +312,9 @@ impl Shell {
                                 .danger()
                                 .label(format!("Delete {selected}"))
                                 .disabled(self.busy)
-                                .on_click(cx.listener(|this, _, window, cx| this.confirm_device_delete(window, cx))),
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.confirm_device_delete(window, cx)
+                                })),
                         )
                     }),
             )
@@ -231,13 +328,25 @@ impl Shell {
                     .flex_col()
                     .gap(px(8.))
                     .when(self.device_library.is_none(), |this| {
-                        this.child(div().text_color(cx.theme().muted_foreground).child("Scanning device…"))
+                        this.child(
+                            div()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Scanning device…"),
+                        )
                     })
                     .when(!self.message.is_empty(), |this| {
-                        this.child(div().text_color(cx.theme().primary).child(self.message.clone()))
+                        this.child(
+                            div()
+                                .text_color(cx.theme().primary)
+                                .child(self.message.clone()),
+                        )
                     })
                     .when(!self.error.is_empty(), |this| {
-                        this.child(div().text_color(cx.theme().danger).child(self.error.clone()))
+                        this.child(
+                            div()
+                                .text_color(cx.theme().danger)
+                                .child(self.error.clone()),
+                        )
                     })
                     .children(filtered.into_iter().map(|book| {
                         let key = book_key(&book);
@@ -274,19 +383,54 @@ impl Shell {
                                     .flex_col()
                                     .child(book.title.clone())
                                     .child(
-                                        div().text_size(px(12.)).text_color(cx.theme().muted_foreground).child(
-                                            format!("{} · {} · {}", book.format, book.filename, format_size(book.size)),
-                                        ),
+                                        div()
+                                            .text_size(px(12.))
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(format!(
+                                                "{} · {} · {}",
+                                                book.format,
+                                                book.filename,
+                                                format_size(book.size)
+                                            )),
                                     ),
                             )
                     })),
             )
     }
 
+    pub(crate) fn begin_device_io(&mut self) {
+        self.device_io = self.device_io.saturating_add(1);
+    }
+
+    pub(crate) fn end_device_io(&mut self) {
+        self.device_io = self.device_io.saturating_sub(1);
+    }
+
+    pub(crate) fn note_open_device(&mut self, connected: &std::collections::HashSet<String>) {
+        let missing = self.route == super::shell::Route::Devices
+            && self
+                .device_id
+                .as_ref()
+                .is_some_and(|id| !connected.contains(id));
+        self.device_missing_polls =
+            note_device_presence(missing, self.device_io, self.device_missing_polls);
+        if unplugged_by_user(self.device_missing_polls, self.device_io) {
+            self.device_id = None;
+            self.device_library = None;
+            self.device_selected.clear();
+            self.device_select_mode = false;
+            self.route = super::shell::Route::Devices;
+            self.error.clear();
+            self.message.clear();
+            self.device_missing_polls = 0;
+        }
+    }
+
     pub fn scan_device(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(id) = self.device_id.clone() else {
             return;
         };
+        self.begin_device_io();
         self.busy = true;
         self.error.clear();
         self.spawn_task(
@@ -294,6 +438,7 @@ impl Shell {
             cx,
             async move { backend::scan_device(id).await.map_err(|e| e.to_string()) },
             |this, result, _, cx| {
+                this.end_device_io();
                 this.busy = false;
                 match result {
                     Ok(library) => this.device_library = Some(library),
@@ -314,12 +459,10 @@ impl Shell {
                 .description("Remove the selected files from the device?")
                 .on_ok({
                     let shell = shell.clone();
-                    move |_, _, cx| {
-                    shell
-                        .downgrade().update_in(cx, |this, window, cx| this.delete_device_selection(window, cx))
-                        .ok();
-                    true
-                }
+                    move |_, window, cx| {
+                        shell.update(cx, |this, cx| this.delete_device_selection(window, cx));
+                        true
+                    }
                 })
         });
     }
@@ -341,12 +484,18 @@ impl Shell {
                 handle: book.handle,
             })
             .collect::<Vec<_>>();
+        self.begin_device_io();
         self.busy = true;
         self.spawn_task(
             window,
             cx,
-            async move { backend::delete_on_device(device_id, targets).await.map_err(|e| e.to_string()) },
+            async move {
+                backend::delete_on_device(device_id, targets)
+                    .await
+                    .map_err(|e| e.to_string())
+            },
             |this, result, window, cx| {
+                this.end_device_io();
                 this.busy = false;
                 match result {
                     Ok(result) => {
@@ -362,8 +511,65 @@ impl Shell {
     }
 }
 
+pub(crate) const NOTICE_SECS: u64 = 5;
+pub(crate) const DEVICE_UNPLUG_POLLS: u8 = 2;
+
+pub(crate) fn note_device_presence(missing: bool, device_io: u32, polls: u8) -> u8 {
+    if device_io > 0 || !missing {
+        0
+    } else {
+        polls.saturating_add(1)
+    }
+}
+
+pub(crate) fn unplugged_by_user(polls: u8, device_io: u32) -> bool {
+    device_io == 0 && polls >= DEVICE_UNPLUG_POLLS
+}
+
+pub(crate) fn offer_manage(ids: &[String], open_device: Option<&str>) -> bool {
+    match ids {
+        [] => false,
+        [id] => open_device != Some(id.as_str()),
+        _ => true,
+    }
+}
+
+pub(crate) fn manage_prompt(products: &[String]) -> (String, String) {
+    if products.len() == 1 {
+        (
+            "eReader connected".into(),
+            format!("{} is connected. Manage it with Grimoire?", products[0]),
+        )
+    } else {
+        (
+            "eReaders connected".into(),
+            format!(
+                "{} are connected. Manage them with Grimoire?",
+                join_names(products)
+            ),
+        )
+    }
+}
+
+fn join_names(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => one.clone(),
+        [first, second] => format!("{first} and {second}"),
+        many => {
+            let (last, rest) = many.split_last().unwrap();
+            format!("{}, and {last}", rest.join(", "))
+        }
+    }
+}
+
 fn book_key(book: &DeviceBook) -> String {
-    format!("{}|{}|{}", book.path, book.handle.unwrap_or(0), book.filename)
+    format!(
+        "{}|{}|{}",
+        book.path,
+        book.handle.unwrap_or(0),
+        book.filename
+    )
 }
 
 fn panel_title(text: &str, _cx: &gpui_kit::App) -> impl IntoElement {
@@ -392,6 +598,55 @@ fn format_size(bytes: u64) -> String {
         format!("{:.1} KB", bytes as f64 / 1024.0)
     } else {
         format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        manage_prompt, note_device_presence, offer_manage, unplugged_by_user, NOTICE_SECS,
+    };
+
+    #[test]
+    fn a_connected_reader_asks_to_manage() {
+        let (title, description) = manage_prompt(&["Kindle Paperwhite".into()]);
+        assert_eq!(title, "eReader connected");
+        assert_eq!(
+            description,
+            "Kindle Paperwhite is connected. Manage it with Grimoire?"
+        );
+        assert!(offer_manage(&["k1".into()], None));
+        assert!(!offer_manage(&["k1".into()], Some("k1")));
+        assert!(offer_manage(&["k1".into(), "k2".into()], Some("k1")));
+        assert!(!offer_manage(&[], None));
+    }
+
+    #[test]
+    fn unplug_returns_after_the_device_stays_gone() {
+        assert_eq!(NOTICE_SECS, 5);
+        assert_eq!(note_device_presence(true, 0, 0), 1);
+        assert!(!unplugged_by_user(1, 0));
+        assert_eq!(note_device_presence(true, 0, 1), 2);
+        assert!(unplugged_by_user(2, 0));
+        assert_eq!(note_device_presence(true, 1, 1), 0);
+        assert!(!unplugged_by_user(0, 1));
+        assert_eq!(note_device_presence(false, 0, 2), 0);
+    }
+
+    #[test]
+    fn several_readers_are_named_together() {
+        let (title, description) = manage_prompt(&["Kindle".into(), "Kobo Clara".into()]);
+        assert_eq!(title, "eReaders connected");
+        assert_eq!(
+            description,
+            "Kindle and Kobo Clara are connected. Manage them with Grimoire?"
+        );
+        let (_, description) =
+            manage_prompt(&["Kindle".into(), "Kobo Clara".into(), "BOOX".into()]);
+        assert_eq!(
+            description,
+            "Kindle, Kobo Clara, and BOOX are connected. Manage them with Grimoire?"
+        );
     }
 }
 
