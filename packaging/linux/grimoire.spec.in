@@ -1,0 +1,45 @@
+%global debug_package %{nil}
+%global _build_id_links none
+%global __os_install_post %{nil}
+
+Name:           grimoire
+Version:        @VERSION@
+Release:        1
+Summary:        eBook collection manager
+License:        MPL-2.0
+URL:            https://grimoirebooks.app
+BuildArch:      @RPM_ARCH@
+Packager:       Boxing Octopus Creative Engineering <ryan.draga@boxingoctop.us>
+# libwayland and libvulkan are dlopen'd, so RPM will not see them as NEEDED.
+Requires:       libwayland-client.so.0()(64bit)
+Requires:       libvulkan.so.1()(64bit)
+Requires:       hicolor-icon-theme
+
+%description
+Grimoire keeps a local library of EPUB, PDF, MOBI, AZW3, and comics,
+and sends books to Kindles and other eReaders.
+
+%install
+rm -rf %{buildroot}
+mkdir -p %{buildroot}
+cp -a @PAYLOAD@/. %{buildroot}/
+
+%post
+if command -v update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database -q /usr/share/applications || :
+fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -q /usr/share/icons/hicolor || :
+fi
+
+%postun
+if [ "$1" -eq 0 ]; then
+  if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database -q /usr/share/applications || :
+  fi
+  if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -q /usr/share/icons/hicolor || :
+  fi
+fi
+
+%files -f @FILELIST@

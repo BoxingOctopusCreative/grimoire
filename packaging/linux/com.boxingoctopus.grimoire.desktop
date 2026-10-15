@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Grimoire
+GenericName=eBook library
+Comment=Manage a local eBook library and send books to eReaders
+Exec=grimoire
+Icon=com.boxingoctopus.grimoire
+Terminal=false
+Categories=Office;
+Keywords=ebook;epub;pdf;mobi;kindle;library;
+StartupWMClass=com.boxingoctopus.grimoire

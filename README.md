@@ -2,17 +2,20 @@
 
 Cross-platform desktop eBook library manager. The window is a native [GPUI](https://gpui-kit.com/) app. The catalog is a local SQLite database with a Calibre-style layout on disk, plus USB/MTP sync for Kindles and other eReaders.
 
-## Features (v0.1)
+## Features
 
 - Create or open a library folder with `metadata.db` and book files on disk
-- Import EPUB, PDF, AZW3, MOBI, TXT, and comics (CBZ/CBR)
+- Import EPUB, PDF, AZW3, MOBI, TXT, and comics (CBZ/CBR), including by dropping files or folders on the library window
 - Extract metadata on import: title, authors, tags, series, description, identifiers, and cover (EPUB, PDF, MOBI/AZW3)
 - Fill missing metadata and cover art from Open Library (manual fetch, plus auto after sparse imports)
-- Read EPUB, PDF, TXT, DRM-free MOBI, and comics (CBZ/CBR) in a separate window with saved progress (MOBI is converted to EPUB for display)
+- Read EPUB, PDF, TXT, DRM-free MOBI, and comics (CBZ/CBR) in their own window with saved progress (MOBI is converted to EPUB for display)
+- Reader controls for EPUB and TXT: font (publisher default, serif, sans, or OpenDyslexic), text size, and text colors (Native, Black and white, Inverted, Paper)
+- Comic reader zoom, plus single-page or two-page layout
 - AZW3: import and Kindle send (Amazon store AZW3 is usually DRM-protected and is not opened in-app)
 - Convert formats in-app: EPUB → MOBI/AZW3, TXT → EPUB (no Calibre)
-- Search (FTS5), edit metadata, delete books
-- Detect connected Kindles and other eReaders over USB/MTP or mounted volumes
+- Search (FTS5), filter by status, format, genre, and author, edit metadata, delete books
+- Light, dark, or follow-system appearance
+- Detect connected Kindles and other eReaders over USB/MTP or mounted volumes, with a chime on connect and disconnect
 - Convert EPUB to MOBI or AZW3 natively for Kindle USB send (no Calibre required)
 - Record transfer history per device
 
@@ -38,12 +41,12 @@ Or use the Makefile:
 make build          # release binary for this machine
 make build-mac      # macOS disk image (loads .env for Apple signing if present)
 make build-windows  # Windows x64 (Windows host)
-make build-linux    # Linux x64 (Linux host)
+make build-linux    # Linux x64 tarball, deb, and rpm (Linux host)
 ```
 
 For a signed and notarized local macOS build, copy `.env.example` to `.env`, fill in the Apple values, then run `make build-mac`. See that file for variable notes.
 
-Run `make help` for the full target list. Disk images land in `dist/`. The release binary is under `app/target/release/`.
+Run `make help` for the full target list. Disk images and Linux packages land in `dist/`. The release binary is under `app/target/release/`.
 
 ## Test
 
@@ -64,7 +67,7 @@ Every pull request runs the test suite. When a PR is **merged**, or when you run
    - Title starts with `MINOR` → minor bump (`1.2.3` → `1.3.0`)
    - Title starts with `PATCH`, or anything else → patch bump (`1.2.3` → `1.2.4`)
 3. Creates a draft `vX.Y.Z` GitHub Release (notes from commit subjects since the previous tag)
-4. Builds release binaries for macOS (arm64 + x64 disk images, signed and notarized), Linux x64, and Windows x64, then attaches them to that draft
+4. Builds release binaries for macOS (arm64 + x64 disk images, signed and notarized), Linux x64 (tar.gz, deb, and rpm), and Windows x64, then attaches them to that draft
 5. Publishes the release (immutable releases lock assets only after publish)
 
 Example titles: `MINOR add dark mode default`, `MAJOR redesign library schema`, `add filter sidebar` (patch).
@@ -97,9 +100,13 @@ CI reads the signing identity from `APPLE_CERTIFICATE`, so do not set `APPLE_SIG
 
 Create the Developer ID certificate and the App Store Connect API key in [Apple Developer](https://developer.apple.com/account) and [App Store Connect](https://appstoreconnect.apple.com/access/integrations/api). Signed and notarized DMGs open normally; drag Grimoire into Applications.
 
-### Windows
+### Downloads
 
-Windows releases are the `Grimoire.exe` binary. Choose the library folder in Settings. Grimoire writes `%APPDATA%\grimoire\config.json` and keeps that library path on later launches.
+Published releases include:
+
+- **macOS:** signed and notarized disk images for Apple Silicon (`macos_arm64`) and Intel (`macos_x64`). Open the DMG and drag Grimoire into Applications. macOS 12 or later.
+- **Windows:** a zip of `Grimoire.exe`. Unpack it and run the app. Choose the library folder in Settings. Grimoire writes `%APPDATA%\grimoire\config.json` and keeps that library path on later launches.
+- **Linux:** x86-64 `.deb`, `.rpm`, and tar.gz (`linux_x64`). Install with `sudo apt install ./Grimoire_*_linux_x64.deb`, `sudo dnf install ./Grimoire_*_linux_x64.rpm`, or `sudo zypper install ./Grimoire_*_linux_x64.rpm`. Grimoire shows up in the application menu. The command is `grimoire`. The tar.gz is the binary on its own: unpack it and run `./Grimoire`. Builds need glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36, and later). Packages install the Wayland, libxkbcommon, fontconfig, and Vulkan loader dependencies. The tar.gz needs those libraries on the system already.
 
 ## Library layout
 
@@ -149,7 +156,7 @@ Other USB devices that identify as an eReader or ebook device may appear as a ge
 
 ### Device detection
 
-The Devices page checks for connected readers every few seconds. A notice appears when a reader connects or disconnects. Detection covers USB MTP devices and mounted volumes (Kobo, Kindle, reMarkable, and volume names that match known brands).
+The Devices page checks for connected readers every few seconds. A notice appears when a reader connects or disconnects, and a short chime plays. Detection covers USB MTP devices and mounted volumes (Kobo, Kindle, reMarkable, and volume names that match known brands).
 
 ### Device library
 
