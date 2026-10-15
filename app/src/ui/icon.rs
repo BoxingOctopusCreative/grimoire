@@ -6,6 +6,11 @@ const ICON_PNG: &[u8] = include_bytes!("../../icons/icon.png");
 
 pub fn apply(options: &mut WindowOptions) {
     options.icon = Some(raster());
+    // Matches the Linux desktop file id (Wayland app id and X11 WM_CLASS).
+    #[cfg(target_os = "linux")]
+    {
+        options.app_id = Some("com.boxingoctopus.grimoire".into());
+    }
 }
 
 /// Dock and Cmd-Tab icon. The Windows executable icon is `icons/icon.ico`, embedded as resource 1.

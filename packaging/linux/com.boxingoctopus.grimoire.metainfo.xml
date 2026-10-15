@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.boxingoctopus.grimoire</id>
+  <name>Grimoire</name>
+  <summary>eBook collection manager</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MPL-2.0</project_license>
+  <developer_name>Boxing Octopus Creative Engineering</developer_name>
+  <description>
+    <p>Grimoire keeps a local library of EPUB, PDF, MOBI, AZW3, and comics, and sends books to Kindles and other eReaders.</p>
+  </description>
+  <launchable type="desktop-id">com.boxingoctopus.grimoire.desktop</launchable>
+  <url type="homepage">https://grimoirebooks.app</url>
+  <releases>
+    <release version="@VERSION@" date="@DATE@"/>
+  </releases>
+</component>

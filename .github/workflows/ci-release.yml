@@ -235,7 +235,11 @@ jobs:
             libwayland-dev \
             libxkbcommon-dev \
             libxkbcommon-x11-dev \
-            libfontconfig1-dev
+            libfontconfig1-dev \
+            binutils \
+            dpkg-dev \
+            rpm \
+            desktop-file-utils
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -304,9 +308,11 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           set -euo pipefail
-          VERSION="${{ needs.version-and-release.outputs.version }}"
-          mkdir -p dist
-          tar -C app/target/release -czf "dist/Grimoire_${VERSION}_${{ matrix.archive_suffix }}.tar.gz" Grimoire
+          chmod +x .github/scripts/package-linux.sh
+          .github/scripts/package-linux.sh \
+            app/target/release/Grimoire \
+            dist \
+            "${{ matrix.archive_suffix }}"
 
       - name: Package Windows binary
         if: matrix.platform == 'windows-latest'

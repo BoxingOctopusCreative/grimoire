@@ -5,7 +5,7 @@
 #   make build              # release binary for this machine
 #   make build-mac          # macOS .app and DMG (loads .env for signing)
 #   make build-windows      # Windows x64, on Windows
-#   make build-linux        # Linux x64, on Linux
+#   make build-linux        # Linux x64 tarball, deb, and rpm, on Linux
 
 CARGO ?= cargo
 
@@ -43,7 +43,7 @@ help:
 	@echo "  make build-mac-arm      macOS Apple Silicon disk image"
 	@echo "  make build-mac-intel    macOS Intel disk image"
 	@echo "  make build-windows      Windows x64 executable"
-	@echo "  make build-linux        Linux x64 executable"
+	@echo "  make build-linux        Linux x64 tarball, deb, and rpm"
 	@echo "  make test               Run cargo test"
 	@echo "  make clean              Remove Rust build outputs and dist/"
 	@echo ""
@@ -54,6 +54,8 @@ help:
 	@echo "signing, set APPLE_SIGNING_IDENTITY in .env."
 	@echo ""
 	@echo "Linux builds need Wayland, xkbcommon, and fontconfig."
+	@echo "Linux packages also need binutils, dpkg-dev, and rpm"
+	@echo "  (Ubuntu: sudo apt-get install binutils dpkg-dev rpm desktop-file-utils)."
 
 test: test-rust
 
@@ -98,7 +100,13 @@ endif
 
 build-linux:
 ifeq ($(HOST_OS),Linux)
+	rustup target add $(LINUX_TARGET)
 	$(CARGO) build --manifest-path app/Cargo.toml --release --bin Grimoire --target $(LINUX_TARGET)
+	chmod +x .github/scripts/package-linux.sh
+	.github/scripts/package-linux.sh \
+		app/target/$(LINUX_TARGET)/release/Grimoire \
+		dist \
+		linux_x64
 else
 	$(error Linux builds require a Linux host (got $(HOST_OS)))
 endif
