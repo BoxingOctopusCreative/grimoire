@@ -113,10 +113,35 @@ if [[ "${CI:-}" == "true" && -z "${IDENTITY}" ]]; then
   exit 1
 fi
 
+# timestamp.apple.com often accepts the request and then sends nothing.
+# codesign gives up after about 15 seconds: "A timestamp was expected but was not found."
+sign_with_timestamp() {
+  local target="$1"
+  shift
+  local attempt err="${STAGE}/codesign.err"
+  for attempt in 1 2 3 4 5; do
+    if codesign "$@" "${target}" 2>"${err}"; then
+      rm -f "${err}"
+      return 0
+    fi
+    echo "codesign failed for ${target} (attempt ${attempt} of 5):" >&2
+    cat "${err}" >&2
+    if [[ "${attempt}" -eq 5 ]]; then
+      echo "Could not get a secure timestamp from timestamp.apple.com." >&2
+      echo "Notarization needs that host reachable on port 80." >&2
+      rm -f "${err}"
+      return 1
+    fi
+    sleep $((attempt * 3))
+  done
+}
+
 if [[ -n "${IDENTITY}" ]]; then
   echo "Signing with ${IDENTITY}"
-  codesign --force --options runtime --timestamp --sign "${IDENTITY}" "${APP}/Contents/MacOS/Grimoire"
-  codesign --force --options runtime --timestamp --sign "${IDENTITY}" "${APP}"
+  sign_with_timestamp "${APP}/Contents/MacOS/Grimoire" \
+    --force --options runtime --timestamp --sign "${IDENTITY}"
+  sign_with_timestamp "${APP}" \
+    --force --options runtime --timestamp --sign "${IDENTITY}"
 fi
 
 # Window matches the background image. Icon positions are centers:
@@ -239,7 +264,7 @@ rm -f "${DMG}"
 write_styled_dmg "${DMG_ROOT}" "${DMG}"
 
 if [[ -n "${IDENTITY}" ]]; then
-  codesign --force --timestamp --sign "${IDENTITY}" "${DMG}"
+  sign_with_timestamp "${DMG}" --force --timestamp --sign "${IDENTITY}"
 fi
 
 if [[ -n "${IDENTITY}" && -n "${APPLE_API_KEY:-}" && -n "${APPLE_API_ISSUER:-}" && -n "${APPLE_API_KEY_PATH:-}" ]]; then
